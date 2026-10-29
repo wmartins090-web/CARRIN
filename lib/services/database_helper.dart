@@ -933,31 +933,155 @@ class DatabaseHelper {
     }
   }
 
-  /// Remove duplicatas físicas do banco mantendo apenas o registro mais recente de cada produto por mercado
+  /// Extrai a melhor estimativa de data para um carrinho/mês baseado no seu título
+  /// Ex: "Outubro 2026" -> 2026-10-01
+  /// Ex: "15/10/2026" ou "15-10-2026" -> 2026-10-15
+  static DateTime parseDateFromMonthTitle(String? monthTitle, {DateTime? fallbackDate}) {
+    if (monthTitle == null || monthTitle.trim().isEmpty) {
+      return fallbackDate ?? DateTime.now();
+    }
+    final raw = monthTitle.trim();
+
+    // 1. Tenta formato dd/MM/yyyy ou dd-MM-yyyy
+    final dmyMatch = RegExp(r'(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})').firstMatch(raw);
+    if (dmyMatch != null) {
+      final day = int.tryParse(dmyMatch.group(1)!) ?? 1;
+      final month = int.tryParse(dmyMatch.group(2)!) ?? 1;
+      final year = int.tryParse(dmyMatch.group(3)!) ?? 2026;
+      return DateTime(year, month, day.clamp(1, 28), 12, 0, 0);
+    }
+
+    // 2. Tenta formato MM/yyyy ou MM-yyyy
+    final myMatch = RegExp(r'(\d{1,2})[\/\-](\d{4})').firstMatch(raw);
+    if (myMatch != null) {
+      final month = int.tryParse(myMatch.group(1)!) ?? 1;
+      final year = int.tryParse(myMatch.group(2)!) ?? 2026;
+      return DateTime(year, month, 1, 12, 0, 0);
+    }
+
+    // 3. Tenta meses em português com ano (ex: "Outubro 2026", "Out 2026", "Outubro/26")
+    final norm = Utils.normalize(raw).toLowerCase();
+    int? detectedMonth;
+    final monthsMap = {
+      'janeiro': 1, 'jan': 1,
+      'fevereiro': 2, 'fev': 2,
+      'marco': 3, 'mar': 3,
+      'abril': 4, 'abr': 4,
+      'maio': 5, 'mai': 5,
+      'junho': 6, 'jun': 6,
+      'julho': 7, 'jul': 7,
+      'agosto': 8, 'ago': 8,
+      'setembro': 9, 'set': 9,
+      'outubro': 10, 'out': 10,
+      'novembro': 11, 'nov': 11,
+      'dezembro': 12, 'dez': 12,
+    };
+
+    for (final entry in monthsMap.entries) {
+      if (norm.contains(entry.key)) {
+        detectedMonth = entry.value;
+        break;
+      }
+    }
+
+    if (detectedMonth != null) {
+      final yearMatch = RegExp(r'(20\d\d)').firstMatch(raw);
+      int year = DateTime.now().year;
+      if (yearMatch != null) {
+        year = int.tryParse(yearMatch.group(1)!) ?? year;
+      } else {
+        final shortYearMatch = RegExp(r'[\s\/\-](\d{2})(?!\d)').firstMatch(raw);
+        if (shortYearMatch != null) {
+          year = (int.tryParse(shortYearMatch.group(1)!) ?? 26) + 2000;
+        }
+      }
+      return DateTime(year, detectedMonth, 1, 12, 0, 0);
+    }
+
+    return fallbackDate ?? DateTime.now();
+  }
+
+  /// Remove duplicatas físicas do banco mantendo apenas o registro mais recente/relevante de cada produto por mercado
   Future<int> deduplicateCommunityPricesCache() async {
     final db = await database;
     try {
-      final deleted = await db.rawDelete('''
-        DELETE FROM community_prices_cache
-        WHERE rowid NOT IN (
-          SELECT MAX(rowid)
-          FROM community_prices_cache
-          GROUP BY LOWER(TRIM(product_name)), LOWER(TRIM(supermarket_name))
-        )
-      ''');
-      return deleted;
+      try {
+        final deleted = await db.rawDelete('''
+          DELETE FROM community_prices_cache
+          WHERE id NOT IN (
+            SELECT id
+            FROM (
+              SELECT id,
+                     ROW_NUMBER() OVER (
+                       PARTITION BY LOWER(TRIM(product_name)), LOWER(TRIM(supermarket_name))
+                       ORDER BY verified_receipt DESC, created_at DESC, rowid DESC
+                     ) as rn
+              FROM community_prices_cache
+            )
+            WHERE rn = 1
+          )
+        ''');
+        return deleted;
+      } catch (_) {
+        // Fallback para SQLite legado
+        return await db.rawDelete('''
+          DELETE FROM community_prices_cache
+          WHERE rowid NOT IN (
+            SELECT MAX(rowid)
+            FROM community_prices_cache
+            GROUP BY LOWER(TRIM(product_name)), LOWER(TRIM(supermarket_name))
+          )
+        ''');
+      }
     } catch (e) {
       debugPrint('Aviso ao deduplicar cache da comunidade no SQLite: $e');
       return 0;
     }
   }
 
-  /// Popula o cache local da comunidade imediatamente a partir das compras do próprio usuário
+  /// Corrige datas de preços locais existentes gerados com timestamp equivocado de "hoje"
+  Future<void> fixExistingLocalPricesDates() async {
+    final db = await database;
+    try {
+      final userItems = await getAllUserPurchasedProducts();
+      if (userItems.isEmpty) return;
+
+      for (var row in userItems) {
+        final name = (row['name'] as String? ?? '').trim();
+        final monthTitle = row['month_title'] as String?;
+        if (name.isEmpty || monthTitle == null || monthTitle.trim().isEmpty) continue;
+
+        final realDate = parseDateFromMonthTitle(monthTitle);
+        await db.update(
+          'community_prices_cache',
+          {'created_at': realDate.toIso8601String()},
+          where: "id LIKE 'local_%' AND LOWER(TRIM(product_name)) = ?",
+          whereArgs: [name.toLowerCase().trim()],
+        );
+      }
+    } catch (e) {
+      debugPrint('Aviso ao recalibrar datas locais: $e');
+    }
+  }
+
+  /// Popula o cache local da comunidade a partir das compras do próprio usuário,
+  /// respeitando a data real de criação da lista/mês e sem sobrescrever preços existentes.
   Future<int> seedCommunityPricesFromUserPurchases() async {
     final db = await database;
     try {
       final userItems = await getAllUserPurchasedProducts();
       if (userItems.isEmpty) return 0;
+
+      // 1. Obtém os produtos que já constam no cache para NÃO alterar suas datas
+      final existingRows = await db.rawQuery(
+        'SELECT LOWER(TRIM(product_name)) as p, LOWER(TRIM(supermarket_name)) as s FROM community_prices_cache'
+      );
+      final Set<String> existingInCache = {};
+      for (final r in existingRows) {
+        final p = (r['p'] as String? ?? '').trim();
+        final s = (r['s'] as String? ?? '').trim();
+        if (p.isNotEmpty) existingInCache.add('$p|$s');
+      }
 
       int inserted = 0;
       await db.transaction((txn) async {
@@ -978,14 +1102,17 @@ class DatabaseHelper {
           final normMarket = market.toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
           final dedupeKey = '$normProduct|$normMarket';
 
-          // Como userItems é ORDER BY id DESC, a primeira ocorrência já é a mais recente
-          if (!seenLocalKeys.add(dedupeKey)) {
+          // Se já está no cache com data real ou já visto neste lote, preserva e não sobrescreve
+          if (existingInCache.contains(dedupeKey) || !seenLocalKeys.add(dedupeKey)) {
             continue;
           }
 
           final match = DefaultSupermarketsData.findMatch(market);
           final mLat = match?.latitude ?? -22.89012;
           final mLng = match?.longitude ?? -43.11535;
+
+          final monthTitle = row['month_title'] as String?;
+          final itemDate = parseDateFromMonthTitle(monthTitle);
 
           final id = 'local_${normProduct}_$normMarket';
           batch.insert(
@@ -1001,9 +1128,9 @@ class DatabaseHelper {
               'longitude': mLng,
               'submitted_by': 'Cliente CARRIN',
               'verified_receipt': 0,
-              'created_at': DateTime.now().toIso8601String(),
+              'created_at': itemDate.toIso8601String(),
             },
-            conflictAlgorithm: ConflictAlgorithm.replace,
+            conflictAlgorithm: ConflictAlgorithm.ignore,
           );
           inserted++;
         }

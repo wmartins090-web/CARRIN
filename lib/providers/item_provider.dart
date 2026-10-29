@@ -2259,6 +2259,7 @@ class ItemProvider with ChangeNotifier {
         longitude: lng,
         submittedBy: _activeUserDisplayName,
         verifiedReceipt: false,
+        createdAt: DatabaseHelper.parseDateFromMonthTitle(month),
       ).catchError((_) => false);
     }
     
@@ -2315,6 +2316,7 @@ class ItemProvider with ChangeNotifier {
           longitude: lng,
           submittedBy: _activeUserDisplayName,
           verifiedReceipt: false,
+          createdAt: DatabaseHelper.parseDateFromMonthTitle(month),
         ).catchError((_) => false);
       }
       

@@ -101,6 +101,7 @@ class CommunityPriceService {
         await prefs.setInt('community_catalog_sync_version', _catalogSyncVersion);
       }
 
+      await DatabaseHelper.instance.fixExistingLocalPricesDates();
       await DatabaseHelper.instance.seedCommunityPricesFromUserPurchases();
 
       // Auto-sincronização obrigatória e transparente das compras do usuário para a comunidade
@@ -144,6 +145,7 @@ class CommunityPriceService {
           market = defaultStoreName;
         }
         final coords = await resolveMarketCoordinates(market);
+        final itemDate = DatabaseHelper.parseDateFromMonthTitle(row['month_title'] as String?);
         toPublish.add(CommunityPrice(
           id: eventId,
           productName: name,
@@ -155,7 +157,7 @@ class CommunityPriceService {
           longitude: coords?['longitude'],
           submittedBy: 'Cliente CARRIN',
           verifiedReceipt: false,
-          createdAt: DateTime.now(),
+          createdAt: itemDate,
         ));
       }
 
@@ -192,6 +194,7 @@ class CommunityPriceService {
         }
 
         final coords = await resolveMarketCoordinates(market);
+        final monthDate = DatabaseHelper.parseDateFromMonthTitle(month);
 
         toPublish.add(CommunityPrice(
           id: 'month_${DateTime.now().millisecondsSinceEpoch}_${name.hashCode.abs()}',
@@ -204,7 +207,7 @@ class CommunityPriceService {
           longitude: coords?['longitude'],
           submittedBy: 'Cliente CARRIN',
           verifiedReceipt: false,
-          createdAt: DateTime.now(),
+          createdAt: monthDate,
         ));
       }
       if (toPublish.isNotEmpty) {
@@ -260,6 +263,7 @@ class CommunityPriceService {
     double? longitude,
     String? submittedBy,
     bool verifiedReceipt = false,
+    DateTime? createdAt,
   }) async {
     await init();
     if (productName.trim().isEmpty || price <= 0 || supermarketName.trim().isEmpty) {
@@ -287,7 +291,7 @@ class CommunityPriceService {
       longitude: finalLng,
       submittedBy: submittedBy ?? 'Cliente CARRIN',
       verifiedReceipt: verifiedReceipt,
-      createdAt: DateTime.now(),
+      createdAt: createdAt ?? DateTime.now(),
     );
 
     // 1. Salva imediatamente no banco SQLite local do dispositivo
