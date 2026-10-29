@@ -23,6 +23,21 @@ class PreloadedSupermarket {
 class DefaultSupermarketsData {
   static final RegExp _tokenSplitRegex = RegExp(r'[\s\-_/]+');
 
+  /// Stopwords comuns em português que não diferenciam lojas de supermercado
+  static const Set<String> _ptStopwords = {
+    'de', 'da', 'do', 'dos', 'das',
+    'em', 'no', 'na', 'nos', 'nas',
+    'e', 'o', 'a', 'os', 'as',
+    'loja', 'unidade',
+  };
+
+  /// Extrai tokens significativos removendo stopwords e pontuação
+  static List<String> extractTokens(String text) {
+    final rawTokens = _normalize(text).split(_tokenSplitRegex).where((t) => t.isNotEmpty).toList();
+    final filtered = rawTokens.where((t) => !_ptStopwords.contains(t)).toList();
+    return filtered.isNotEmpty ? filtered : rawTokens;
+  }
+
   static String normalize(String text) => _normalize(text);
 
   static String _normalize(String text) {
@@ -109,7 +124,7 @@ class DefaultSupermarketsData {
     final combined = '$nameNorm $chainNorm $addrNorm $cityNorm';
     if (combined.contains(qNorm)) return true;
 
-    final tokens = qNorm.split(_tokenSplitRegex).where((t) => t.isNotEmpty);
+    final tokens = extractTokens(qNorm);
     return tokens.every((t) => combined.contains(t));
   }
 
@@ -170,18 +185,40 @@ class DefaultSupermarketsData {
       return _simpleMatchCache[cleanNorm];
     }
 
-    // 2. Busca onde contém ou tokens coincidem usando lista pré-normalizada
-    final tokens = cleanNorm.split(_tokenSplitRegex).where((t) => t.isNotEmpty).toList();
+    // 2. Busca por tokens significativos (sem stopwords)
+    final tokens = extractTokens(cleanNorm);
 
-    final List<PreloadedSupermarket> candidates = [];
+    final List<PreloadedSupermarket> nameMatches = [];
+    final List<PreloadedSupermarket> combinedMatches = [];
+
     for (final entry in _normalizedEntries!) {
       final sNorm = entry.key;
+      final s = entry.value;
+
+      // Correspondência direta ou substring no nome
       if (sNorm.contains(cleanNorm) || cleanNorm.contains(sNorm)) {
-        candidates.add(entry.value);
-      } else if (tokens.isNotEmpty && tokens.every((t) => sNorm.contains(t))) {
-        candidates.add(entry.value);
+        nameMatches.add(s);
+        continue;
+      }
+
+      // Correspondência onde todos os tokens significativos estão no nome
+      if (tokens.isNotEmpty && tokens.every((t) => sNorm.contains(t))) {
+        nameMatches.add(s);
+        continue;
+      }
+
+      // Correspondência combinando nome, cidade e endereço
+      if (tokens.isNotEmpty) {
+        final cNorm = _normalize(s.city);
+        final aNorm = s.address != null ? _normalize(s.address!) : '';
+        final fullText = '$sNorm $cNorm $aNorm';
+        if (tokens.every((t) => fullText.contains(t))) {
+          combinedMatches.add(s);
+        }
       }
     }
+
+    final candidates = nameMatches.isNotEmpty ? nameMatches : combinedMatches;
 
     if (candidates.isEmpty) {
       if (userLat == null && userLng == null) {

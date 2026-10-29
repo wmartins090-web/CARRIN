@@ -1,6 +1,6 @@
 name: lista_compras
 description: Ecossistema mobile inteligente para compras de mercado, controle de orçamento e radar colaborativo de preços integrado ao Google Sheets.
-version: 1.3.585+585
+version: 1.3.586+586
 
 environment:
   sdk: '>=3.0.0 <4.0.0'

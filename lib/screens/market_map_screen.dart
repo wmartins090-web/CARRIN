@@ -231,12 +231,86 @@ class _MarketMapScreenState extends State<MarketMapScreen> {
     if (mounted) {
       setState(() => _isLoading = false);
 
-      if (widget.initialFocusMarket != null && _filteredMarkets.isNotEmpty) {
-        final match = _filteredMarkets.firstWhere(
-          (m) => m.supermarketName.toLowerCase() == widget.initialFocusMarket!.toLowerCase(),
-          orElse: () => _filteredMarkets.first,
-        );
-        _selectMarket(match, openBottomSheet: false);
+      if (widget.initialFocusMarket != null && widget.initialFocusMarket!.trim().isNotEmpty) {
+        final targetName = widget.initialFocusMarket!.trim();
+
+        // 1. Tenta encontrar no _filteredMarkets (exato ou busca por tokens)
+        MarketComparison? match;
+        for (final m in _filteredMarkets) {
+          if (m.supermarketName.toLowerCase() == targetName.toLowerCase() ||
+              DefaultSupermarketsData.matchesSearch(m.supermarketName, targetName)) {
+            match = m;
+            break;
+          }
+        }
+
+        // 2. Se não achou em _filteredMarkets, tenta no _allLoadedMarkets
+        if (match == null) {
+          for (final m in _allLoadedMarkets) {
+            if (m.supermarketName.toLowerCase() == targetName.toLowerCase() ||
+                DefaultSupermarketsData.matchesSearch(m.supermarketName, targetName)) {
+              match = m;
+              break;
+            }
+          }
+        }
+
+        // 3. Se ainda não achou, busca no catálogo padrão
+        if (match == null) {
+          final pre = DefaultSupermarketsData.findMatch(
+            targetName,
+            userLat: _userPosition.latitude,
+            userLng: _userPosition.longitude,
+          );
+          if (pre != null) {
+            MarketComparison? foundInLoaded;
+            for (final m in _allLoadedMarkets) {
+              if (m.supermarketName.toLowerCase() == pre.name.toLowerCase() ||
+                  (m.latitude != null && (m.latitude! - pre.latitude).abs() < 0.001 &&
+                   m.longitude != null && (m.longitude! - pre.longitude).abs() < 0.001)) {
+                foundInLoaded = m;
+                break;
+              }
+            }
+
+            if (foundInLoaded != null) {
+              match = foundInLoaded;
+            } else {
+              final dist = LocationService.instance.calculateDistance(
+                _userPosition.latitude,
+                _userPosition.longitude,
+                pre.latitude,
+                pre.longitude,
+              );
+              match = MarketComparison(
+                supermarketName: pre.name,
+                latitude: pre.latitude,
+                longitude: pre.longitude,
+                distanceMeters: dist,
+                itemsCount: 0,
+                averageItemPrice: 0.0,
+                cheapestCount: 0,
+              );
+              _allLoadedMarkets.add(match);
+            }
+          }
+        }
+
+        if (match != null) {
+          // Se o mercado estiver além do raio atual, expande o raio para exibi-lo no mapa
+          if (match.distanceMeters != null && match.distanceMeters! > _radiusKm * 1000) {
+            final neededRadius = ((match.distanceMeters! / 1000).ceil() + 5).toDouble();
+            if (neededRadius > _radiusKm) {
+              _radiusKm = neededRadius;
+            }
+            _applyFilters(fitCameraIfFiltered: false);
+          } else if (!_filteredMarkets.any((m) => m.supermarketName == match!.supermarketName)) {
+            _filteredMarkets.insert(0, match);
+          }
+          _selectMarket(match, openBottomSheet: false);
+        } else if (_filteredMarkets.isNotEmpty) {
+          _fitAllMarkers();
+        }
       }
     }
 
@@ -289,19 +363,21 @@ class _MarketMapScreenState extends State<MarketMapScreen> {
 
   void _applyFilters({bool fitCameraIfFiltered = false}) {
     final maxMeters = _radiusKm * 1000;
-    final hasActiveSearchOrChain = _searchQuery.trim().isNotEmpty || _selectedChain != 'Todas';
+    final hasSearch = _searchQuery.trim().isNotEmpty;
+    final hasActiveSearchOrChain = hasSearch || _selectedChain != 'Todas';
 
     // 1. Filtra por rede, busca por nome e raio
     List<MarketComparison> result = _allLoadedMarkets.where((m) {
       if (!DefaultSupermarketsData.matchesChain(m.supermarketName, _selectedChain)) {
         return false;
       }
-      if (_searchQuery.trim().isNotEmpty) {
+      if (hasSearch) {
         if (!DefaultSupermarketsData.matchesSearch(m.supermarketName, _searchQuery)) {
           return false;
         }
       }
-      if (m.distanceMeters != null && m.distanceMeters! > maxMeters) {
+      // Se não há pesquisa textual ativa, restringe pela distância do raio
+      if (!hasSearch && m.distanceMeters != null && m.distanceMeters! > maxMeters) {
         return false;
       }
       return true;
@@ -354,7 +430,7 @@ class _MarketMapScreenState extends State<MarketMapScreen> {
       _filteredMarkets = result;
       if (_selectedMarket != null &&
           !_filteredMarkets.any((m) => m.supermarketName == _selectedMarket!.supermarketName)) {
-        _selectedMarket = _filteredMarkets.isNotEmpty ? _filteredMarkets.first : null;
+        _selectedMarket = null;
       }
     });
 

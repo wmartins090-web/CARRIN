@@ -1,14 +1,14 @@
 {
-  "version": "1.3.585",
-  "build_number": 585,
+  "version": "1.3.586",
+  "build_number": 586,
   "release_date": "2026-10-29",
-  "title": "CARRIN v1.3.585",
+  "title": "CARRIN v1.3.586",
   "release_notes": [
-    "Radar Comunitário: alinhamento histórico das datas de cotações com base na data de criação das listas/planilhas",
-    "Correção no cache local: preservação permanente da data real de inclusão sem sobrescrever para a data de abertura do app",
-    "Atualizador OTA: detecção dinâmica da versão real do pacote instalado via PackageInfo e queries nativas de instalação"
+    "Mapa e Busca de Mercados: correção da navegação para mercados fora do raio padrão (ex: Supermarket de Alcântara)",
+    "Filtro inteligente com suporte a preposições em português (de, da, do, no, na, etc.) no catálogo e pesquisa",
+    "Expansão automática de raio e remoção de redirecionamento incorreto para lojas próximas (Icaraí)"
   ],
-  "apk_url": "https://github.com/hollopocran/CARRIN/releases/download/v1.3.585/carrin_v1.3.585.apk",
+  "apk_url": "https://github.com/hollopocran/CARRIN/releases/download/v1.3.586/carrin_v1.3.586.apk",
   "size_bytes": 118255604,
   "is_active": true,
   "force_update": false
