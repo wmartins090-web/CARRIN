@@ -127,7 +127,9 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
 
   Future<void> _triggerInstall(String filePath) async {
     final success = await AppUpdateService.instance.installApk(filePath);
-    if (!success && mounted) {
+    if (success && mounted) {
+      Navigator.pop(context);
+    } else if (!success && mounted) {
       await AppUpdateService.instance.cleanOldDownloadedApks();
       setState(() {
         _isDownloading = false;

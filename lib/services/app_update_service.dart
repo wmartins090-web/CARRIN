@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'notification_service.dart';
@@ -74,8 +75,17 @@ class AppUpdateService {
   AppUpdateService._();
   static final AppUpdateService instance = AppUpdateService._();
 
-  static const String currentAppVersion = '1.3.583';
-  static const int currentBuildNumber = 583;
+  static String currentAppVersion = '1.3.585';
+  static int currentBuildNumber = 585;
+
+  /// Inicializa dinamicamente as informações reais do pacote instalado no Android
+  static Future<void> initPackageInfo() async {
+    try {
+      final info = await PackageInfo.fromPlatform();
+      currentAppVersion = info.version;
+      currentBuildNumber = int.tryParse(info.buildNumber) ?? currentBuildNumber;
+    } catch (_) {}
+  }
 
   static const MethodChannel _installerChannel = MethodChannel('com.wmartins.carrin/installer');
 

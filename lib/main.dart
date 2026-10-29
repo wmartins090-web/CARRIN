@@ -7,6 +7,7 @@ import 'theme/app_themes.dart';
 import 'screens/splash_screen.dart';
 import 'services/notification_service.dart';
 import 'services/auth_service.dart';
+import 'services/app_update_service.dart';
 import 'services/background_update_checker.dart';
 
 /// Entry point for the CARRIN application.
@@ -37,6 +38,11 @@ void main() async {
   } catch (e) {
     debugPrint("Erro ao inicializar notificações: $e");
   }
+
+  // Carrega informações da versão do aplicativo instalada
+  try {
+    await AppUpdateService.initPackageInfo();
+  } catch (_) {}
 
   // Setup background update checker (WorkManager periódico)
   try {

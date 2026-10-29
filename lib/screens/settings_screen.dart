@@ -279,10 +279,10 @@ class SettingsScreen extends StatelessWidget {
       );
     } else {
       messenger.showSnackBar(
-        const SnackBar(
+        SnackBar(
           content: Text('🎉 Você já está usando a versão mais recente! (v${AppUpdateService.currentAppVersion})'),
-          duration: Duration(seconds: 3),
-          backgroundColor: Color(0xFF10B981),
+          duration: const Duration(seconds: 3),
+          backgroundColor: const Color(0xFF10B981),
         ),
       );
     }
