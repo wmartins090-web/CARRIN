@@ -1940,6 +1940,7 @@ class _MarketMapScreenState extends State<MarketMapScreen> with TickerProviderSt
 
   /// Constrói um Pin leve (sem texto quando não selecionado) para máxima fluidez (60fps) no mapa.
   /// Quando selecionado pelo clique do usuário, exibe o balão superior com o nome do mercado.
+  // ignore: unused_element
   Marker _buildMarketMarker(MarketComparison market, Color primary, Color cardColor, bool isDark) {
     final isCheapest = market.isCheapest;
     final isSelected = _selectedMarket?.supermarketName == market.supermarketName;
@@ -2168,31 +2169,8 @@ class _MarketMapScreenState extends State<MarketMapScreen> with TickerProviderSt
       ),
     );
 
-    // 2. Marcadores dos Mercados (com deduplicação de sobreposição geográfica para eliminar redundâncias e manter 60-120fps)
-    MarketComparison? selectedForTop;
-    int renderedPins = 0;
-    final Set<String> renderedCoords = {};
-
-    for (var market in _filteredMarkets) {
-      if (market.latitude == null || market.longitude == null) continue;
-      if (_selectedMarket?.supermarketName == market.supermarketName) {
-        selectedForTop = market;
-        continue;
-      }
-      // Deduplicação: se houver dois marcadores na mesmíssima coordenada (< 0.0001 graus / ~10 metros), exibe apenas um
-      final coordKey = '${market.latitude!.toStringAsFixed(4)}_${market.longitude!.toStringAsFixed(4)}';
-      if (renderedCoords.contains(coordKey)) continue;
-      renderedCoords.add(coordKey);
-
-      if (_showMarketPins && renderedPins < 180) {
-        markers.add(_buildMarketMarker(market, primary, cardColor, isDark));
-        renderedPins++;
-      }
-    }
-    if (selectedForTop != null) {
-      markers.add(_buildMarketMarker(selectedForTop, primary, cardColor, isDark));
-    }
-
+    // 2. Marcadores dos Mercados: REMOVIDOS TEMPORARIAMENTE (Trabalho do zero)
+    // Mapa 100% limpo conforme solicitado: nenhum marcador de supermercado renderizado por enquanto.
     // 3. Marcador de Ponto Escolhido no Mapa (se o usuário clicou/segurou em um ponto específico)
     if (_pickedMapPoint != null) {
       markers.add(
