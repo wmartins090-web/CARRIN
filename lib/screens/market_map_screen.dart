@@ -2169,8 +2169,22 @@ class _MarketMapScreenState extends State<MarketMapScreen> with TickerProviderSt
       ),
     );
 
-    // 2. Marcadores dos Mercados: REMOVIDOS TEMPORARIAMENTE (Trabalho do zero)
-    // Mapa 100% limpo conforme solicitado: nenhum marcador de supermercado renderizado por enquanto.
+    // 2. Marcadores dos Mercados: MODO FOCO SOB DEMANDA (ZERO POLUIÇÃO)
+    // O mapa permanece limpo e fluido (60-120fps). Apenas renderiza marcadores se:
+    // a) O usuário selecionou um mercado no carrossel/lista (_selectedMarket)
+    // b) OU há uma busca ativa de texto (_searchQuery), exibindo até 8 resultados deduplicados.
+    if (_selectedMarket != null && _selectedMarket!.latitude != null && _selectedMarket!.longitude != null) {
+      markers.add(_buildMarketMarker(_selectedMarket!, primary, cardColor, isDark));
+    } else if (_searchQuery.trim().isNotEmpty) {
+      final Set<String> seenCoords = {};
+      for (var market in _filteredMarkets.take(8)) {
+        if (market.latitude == null || market.longitude == null) continue;
+        final key = '${market.latitude!.toStringAsFixed(4)}_${market.longitude!.toStringAsFixed(4)}';
+        if (seenCoords.contains(key)) continue;
+        seenCoords.add(key);
+        markers.add(_buildMarketMarker(market, primary, cardColor, isDark));
+      }
+    }
     // 3. Marcador de Ponto Escolhido no Mapa (se o usuário clicou/segurou em um ponto específico)
     if (_pickedMapPoint != null) {
       markers.add(

@@ -1,0 +1,30 @@
+[
+  {
+    "place_id": "ChIJb_assai_alcantara",
+    "name": "Assaí Atacadista - Alcântara",
+    "latitude": -22.8252,
+    "longitude": -43.0031,
+    "city": "São Gonçalo",
+    "neighborhood": "Alcântara",
+    "address": "R. Raul Veiga, 120 - Alcântara, São Gonçalo - RJ",
+    "color": "#0D47A1",
+    "icon": "shopping_cart",
+    "rating": 4.2,
+    "opening_hours": "07:00 - 22:00",
+    "is_verified": true
+  },
+  {
+    "place_id": "ChIJ_guanabara_niteroi",
+    "name": "Supermercados Guanabara - Fonseca",
+    "latitude": -22.8901,
+    "longitude": -43.1153,
+    "city": "Niterói",
+    "neighborhood": "Fonseca",
+    "address": "Alameda São Boaventura, 82 - Fonseca, Niterói - RJ",
+    "color": "#D32F2F",
+    "icon": "store",
+    "rating": 4.2,
+    "opening_hours": "07:00 - 22:00",
+    "is_verified": true
+  }
+]
