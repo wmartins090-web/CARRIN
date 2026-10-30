@@ -7,6 +7,7 @@ import '../providers/item_provider.dart';
 import '../services/receipt_parser.dart';
 import '../services/utils.dart';
 import '../services/community_price_service.dart';
+import '../services/sefaz_receipt_service.dart';
 import 'barcode_scanner_screen.dart';
 
 class ReceiptScannerScreen extends StatefulWidget {
@@ -90,65 +91,114 @@ class _ReceiptScannerScreenState extends State<ReceiptScannerScreen> {
 
     if (scanned == null || scanned.isEmpty) return;
 
-    final result = ReceiptParser.parseNfcUrl(scanned);
-    if (result.nfcKey != null) {
-      setState(() {
-        _nfcKey = result.nfcKey;
-        _cnpj = result.cnpj ?? _cnpj;
-        _uf = result.uf ?? _uf;
-        _statusMessage = 'NFC-e detectada (UF: ${_uf ?? 'BR'}, CNPJ: ${_cnpj ?? '-'}).';
-      });
-
-      if (mounted) {
-        showDialog(
-          context: context,
-          builder: (ctx) => AlertDialog(
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-            title: const Row(
-              children: [
-                Icon(Icons.qr_code_2, color: Colors.green),
-                SizedBox(width: 8),
-                Text('NFC-e Reconhecida'),
-              ],
-            ),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                if (_uf != null) Text('Estado (UF): $_uf', style: const TextStyle(fontWeight: FontWeight.bold)),
-                if (_cnpj != null) Text('CNPJ: $_cnpj'),
-                const SizedBox(height: 8),
-                Text('Chave: $_nfcKey', style: const TextStyle(fontSize: 11, color: Colors.grey)),
-                const SizedBox(height: 12),
-                const Text(
-                  'Para carregar todos os itens com detalhes, você também pode tirar uma foto do cupom fiscal com IA.',
-                  style: TextStyle(fontSize: 13),
-                ),
-              ],
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(ctx),
-                child: const Text('OK'),
-              ),
-              ElevatedButton.icon(
-                onPressed: () {
-                  Navigator.pop(ctx);
-                  _processImage(ImageSource.camera);
-                },
-                icon: const Icon(Icons.camera_alt, size: 16),
-                label: const Text('Tirar Foto dos Itens'),
-              ),
-            ],
-          ),
-        );
-      }
-    } else {
+    final initial = ReceiptParser.parseNfcUrl(scanned);
+    if (initial.nfcKey == null && !scanned.startsWith('http')) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('O código lido não corresponde a uma URL de NFC-e válida.')),
         );
       }
+      return;
+    }
+
+    setState(() {
+      _isProcessing = true;
+      _nfcKey = initial.nfcKey ?? _nfcKey;
+      _cnpj = initial.cnpj ?? _cnpj;
+      _uf = initial.uf ?? _uf;
+      _statusMessage = 'Consultando SEFAZ (${_uf ?? 'BR'}) e baixando itens da nota...';
+    });
+
+    try {
+      final sefazResult = await SefazReceiptService.instance.fetchItemsFromQrUrl(scanned);
+
+      if (!mounted) return;
+
+      setState(() {
+        _isProcessing = false;
+        _extractedItems = sefazResult.items;
+        _storeName = sefazResult.storeName ?? _storeName;
+        _cnpj = sefazResult.cnpj ?? _cnpj;
+        _nfcKey = sefazResult.nfcKey ?? _nfcKey;
+        _uf = sefazResult.uf ?? _uf;
+        _statusMessage = 'Sucesso! ${_extractedItems.length} produtos carregados diretamente da SEFAZ.';
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('🎉 ${sefazResult.items.length} itens importados diretamente da SEFAZ!'),
+          backgroundColor: Colors.green.shade700,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        _isProcessing = false;
+        _statusMessage = 'NFC-e detectada (UF: ${_uf ?? 'BR'}, CNPJ: ${_cnpj ?? '-'}).';
+      });
+
+      final bool isCaptcha = e is SefazCaptchaException || e.toString().toLowerCase().contains('captcha');
+      final String reason = isCaptcha
+          ? 'A SEFAZ do seu estado (${_uf ?? 'BR'}) exigiu validação por CAPTCHA para exibir os itens.'
+          : 'Não foi possível baixar os itens diretamente da SEFAZ (${e.toString().replaceAll('Exception: ', '')}).';
+
+      showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: const Row(
+            children: [
+              Icon(Icons.qr_code_2, color: Colors.green),
+              SizedBox(width: 8),
+              Expanded(child: Text('NFC-e Reconhecida')),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (_uf != null) Text('Estado (UF): $_uf', style: const TextStyle(fontWeight: FontWeight.bold)),
+              if (_cnpj != null) Text('CNPJ: $_cnpj'),
+              const SizedBox(height: 8),
+              if (_nfcKey != null) Text('Chave: $_nfcKey', style: const TextStyle(fontSize: 11, color: Colors.grey)),
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.amber.shade50,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: Colors.amber.shade300),
+                ),
+                child: Text(
+                  reason,
+                  style: TextStyle(fontSize: 12.5, color: Colors.amber.shade900),
+                ),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'Deseja tirar uma foto do cupom fiscal para a IA extrair todos os produtos agora?',
+                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Agora não'),
+            ),
+            ElevatedButton.icon(
+              onPressed: () {
+                Navigator.pop(ctx);
+                _processImage(ImageSource.camera);
+              },
+              icon: const Icon(Icons.camera_alt, size: 16),
+              label: const Text('Tirar Foto do Cupom'),
+            ),
+          ],
+        ),
+      );
     }
   }
 

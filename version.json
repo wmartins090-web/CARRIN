@@ -1,16 +1,16 @@
 {
-  "version": "1.3.589",
-  "build_number": 589,
+  "version": "1.3.590",
+  "build_number": 590,
   "release_date": "2026-10-30",
-  "title": "CARRIN v1.3.589",
+  "title": "CARRIN v1.3.590",
   "release_notes": [
-    "Novidades inspiradas no Mapew: Pílulas de preço flutuantes e coroa de melhor oferta sobre os pins no mapa",
-    "Meu Carrinho no Mapa: estimativa e comparação da cesta completa de compras entre os supermercados da região",
-    "Conferência Inteligente de Cupom Fiscal: auditoria em tempo real entre o carrinho e cupom fiscal (NFC-e/OCR), alertando divergências e preços cobrados a mais",
-    "Selo de Preço Verificado: destaque de autenticidade para preços confirmados por cupom fiscal"
+    "Extração Automática de Produtos via QR Code NFC-e: escaneie o QR Code e o app baixa os produtos, preços e quantidades direto da SEFAZ",
+    "Conexão Inteligente SEFAZ com fallback amigável: se a SEFAZ exigir CAPTCHA, sugere foto OCR instantânea",
+    "Novidades Mapew: Pílulas de preço flutuantes no mapa, coroa de melhor oferta e Meu Carrinho no Mapa (cesta completa)",
+    "Conferência de Cupom vs Carrinho: auditoria em tempo real alertando sobrepreços e economias no caixa"
   ],
-  "apk_url": "https://github.com/hollopocran/CARRIN/releases/download/v1.3.589/carrin_v1.3.589.apk",
-  "size_bytes": 118288468,
+  "apk_url": "https://github.com/hollopocran/CARRIN/releases/download/v1.3.590/carrin_v1.3.590.apk",
+  "size_bytes": 119763624,
   "is_active": true,
   "force_update": false
 }
