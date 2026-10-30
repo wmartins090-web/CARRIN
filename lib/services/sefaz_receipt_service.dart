@@ -8,10 +8,10 @@ import '../models/item.dart';
 import '../providers/item_provider.dart';
 import 'receipt_parser.dart';
 
-/// Exceção lançada quando a SEFAZ exige CAPTCHA ou bloqueia o scraper.
+/// Exceção lançada quando a SEFAZ exige CAPTCHA ou proteção anti-robô/WAF.
 class SefazCaptchaException implements Exception {
   final String message;
-  const SefazCaptchaException([this.message = 'A SEFAZ solicitou validação por CAPTCHA.']);
+  const SefazCaptchaException([this.message = 'A SEFAZ solicitou validação pelo navegador.']);
 
   @override
   String toString() => message;
@@ -91,11 +91,11 @@ class SefazReceiptService {
       }
     }
 
-    // Verifica se a SEFAZ apresentou um CAPTCHA
+    // Verifica se a SEFAZ apresentou um CAPTCHA ou desafio WAF F5 BIG-IP
     _checkForCaptcha(htmlContent);
 
     // Realiza o parse do documento HTML
-    return _parseSefazHtml(
+    return parseSefazHtml(
       htmlContent: htmlContent,
       nfcKey: nfcKey,
       uf: uf,
@@ -103,9 +103,16 @@ class SefazReceiptService {
     );
   }
 
-  /// Verifica indicadores comuns de CAPTCHA nos portais estaduais
+  /// Verifica indicadores comuns de CAPTCHA ou proteção de bot nos portais estaduais (F5 BIG-IP, reCAPTCHA, etc.)
   void _checkForCaptcha(String html) {
     final lower = html.toLowerCase();
+    
+    // Indicadores de WAF / Bot protection que requerem execução de JavaScript (ex: F5 BIG-IP da SEFAZ-RJ)
+    final isBotProtection = lower.contains('/tspd/') ||
+        lower.contains('loaderconfig') ||
+        lower.contains('acesso bloqueado e/ou negado') ||
+        lower.contains('acesso negado');
+
     final hasCaptchaKeywords = lower.contains('g-recaptcha') ||
         lower.contains('h-captcha') ||
         lower.contains('cf-turnstile') ||
@@ -116,21 +123,22 @@ class SefazReceiptService {
         lower.contains('validação de segurança') ||
         lower.contains('validacao de seguranca');
 
-    // Se tiver indicador de captcha e não tiver os elementos típicos de itens da NFC-e
+    // Se tiver indicador de captcha ou WAF e não tiver os elementos típicos de itens da NFC-e
     final hasItemsTable = lower.contains('txttit') ||
         lower.contains('fixo-prod-desc') ||
         lower.contains('item +') ||
-        lower.contains('rcod');
+        lower.contains('rcod') ||
+        lower.contains('rvlunit');
 
-    if (hasCaptchaKeywords && !hasItemsTable) {
+    if ((isBotProtection || hasCaptchaKeywords) && !hasItemsTable) {
       throw const SefazCaptchaException(
-        'A SEFAZ deste estado exigiu validação por CAPTCHA para exibir os produtos.',
+        'A SEFAZ deste estado utiliza proteção de segurança que requer validação pelo navegador.',
       );
     }
   }
 
-  /// Extrai itens, estabelecimento e totais do HTML da SEFAZ
-  ReceiptParseResult _parseSefazHtml({
+  /// Extrai itens, estabelecimento e totais a partir do HTML puro retornado pela SEFAZ
+  ReceiptParseResult parseSefazHtml({
     required String htmlContent,
     String? nfcKey,
     String? uf,
@@ -269,10 +277,8 @@ class SefazReceiptService {
       final el = doc.querySelector(sel);
       if (el != null && el.text.trim().isNotEmpty) {
         var text = el.text.trim();
-        // Remove quebras de linha e múltiplos espaços
         text = text.replaceAll(RegExp(r'\s+'), ' ');
         if (text.length > 2 && text.length < 80) {
-          // Converte para Title Case amigável
           return text.split(' ').map((w) {
             if (w.isEmpty) return '';
             if (w.length <= 2) return w.toUpperCase();

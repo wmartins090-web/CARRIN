@@ -8,6 +8,7 @@ import '../services/receipt_parser.dart';
 import '../services/utils.dart';
 import '../services/community_price_service.dart';
 import '../services/sefaz_receipt_service.dart';
+import '../widgets/sefaz_webview_modal.dart';
 import 'barcode_scanner_screen.dart';
 
 class ReceiptScannerScreen extends StatefulWidget {
@@ -134,6 +135,49 @@ class _ReceiptScannerScreenState extends State<ReceiptScannerScreen> {
     } catch (e) {
       if (!mounted) return;
 
+      // Se a SEFAZ bloqueou com CAPTCHA ou proteção WAF (ex: F5 BIG-IP no RJ),
+      // abre o navegador integrado para o usuário liberar a consulta e extrair os produtos
+      final bool needsBrowser = e is SefazCaptchaException ||
+          e is SefazParseException ||
+          e.toString().toLowerCase().contains('captcha') ||
+          e.toString().toLowerCase().contains('navegador');
+
+      if (needsBrowser) {
+        setState(() {
+          _isProcessing = false;
+          _statusMessage = 'Abrindo portal da SEFAZ para validação...';
+        });
+
+        final webviewResult = await SefazWebViewModal.show(
+          context,
+          url: scanned,
+          nfcKey: _nfcKey,
+          uf: _uf,
+          cnpjFallback: _cnpj,
+        );
+
+        if (webviewResult != null && webviewResult.items.isNotEmpty) {
+          if (!mounted) return;
+          setState(() {
+            _extractedItems = webviewResult.items;
+            _storeName = webviewResult.storeName ?? _storeName;
+            _cnpj = webviewResult.cnpj ?? _cnpj;
+            _nfcKey = webviewResult.nfcKey ?? _nfcKey;
+            _uf = webviewResult.uf ?? _uf;
+            _statusMessage = 'Sucesso! ${_extractedItems.length} produtos carregados da SEFAZ.';
+          });
+
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('🎉 ${webviewResult.items.length} itens importados diretamente da SEFAZ!'),
+              backgroundColor: Colors.green.shade700,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+          return;
+        }
+      }
+
       setState(() {
         _isProcessing = false;
         _statusMessage = 'NFC-e detectada (UF: ${_uf ?? 'BR'}, CNPJ: ${_cnpj ?? '-'}).';
@@ -143,6 +187,8 @@ class _ReceiptScannerScreenState extends State<ReceiptScannerScreen> {
       final String reason = isCaptcha
           ? 'A SEFAZ do seu estado (${_uf ?? 'BR'}) exigiu validação por CAPTCHA para exibir os itens.'
           : 'Não foi possível baixar os itens diretamente da SEFAZ (${e.toString().replaceAll('Exception: ', '')}).';
+
+      if (!mounted) return;
 
       showDialog(
         context: context,
