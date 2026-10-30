@@ -44,7 +44,7 @@ class MarketMapScreen extends StatefulWidget {
   State<MarketMapScreen> createState() => _MarketMapScreenState();
 }
 
-class _MarketMapScreenState extends State<MarketMapScreen> {
+class _MarketMapScreenState extends State<MarketMapScreen> with TickerProviderStateMixin {
   static const String _prefMapStyleKey = 'market_map_tile_style';
 
   final MapController _mapController = MapController();
@@ -85,6 +85,9 @@ class _MarketMapScreenState extends State<MarketMapScreen> {
   bool _pickOnMapMode = false;
   LatLng? _pickedMapPoint;
   MapTileStyle _mapTileStyle = MapTileStyle.googleStandard;
+  double _mapRotation = 0.0;
+  AnimationController? _cameraAnimController;
+  AnimationController? _rotationAnimController;
 
   @override
   void initState() {
@@ -151,6 +154,8 @@ class _MarketMapScreenState extends State<MarketMapScreen> {
 
   @override
   void dispose() {
+    _cameraAnimController?.dispose();
+    _rotationAnimController?.dispose();
     _gpsStreamSubscription?.cancel();
     _cardsPageController.dispose();
     _mapController.dispose();
@@ -158,6 +163,70 @@ class _MarketMapScreenState extends State<MarketMapScreen> {
     _searchFocusNode.dispose();
     super.dispose();
   }
+
+  void _animatedMapMove(LatLng destLocation, double destZoom) {
+    _cameraAnimController?.stop();
+    _cameraAnimController?.dispose();
+
+    final camera = _mapController.camera;
+    final latTween = Tween<double>(begin: camera.center.latitude, end: destLocation.latitude);
+    final lngTween = Tween<double>(begin: camera.center.longitude, end: destLocation.longitude);
+    final zoomTween = Tween<double>(begin: camera.zoom, end: destZoom);
+
+    final controller = AnimationController(
+      duration: const Duration(milliseconds: 550),
+      vsync: this,
+    );
+    _cameraAnimController = controller;
+
+    final animation = CurvedAnimation(parent: controller, curve: Curves.fastOutSlowIn);
+
+    controller.addListener(() {
+      _mapController.move(
+        LatLng(latTween.evaluate(animation), lngTween.evaluate(animation)),
+        zoomTween.evaluate(animation),
+      );
+    });
+
+    animation.addStatusListener((status) {
+      if (status == AnimationStatus.completed || status == AnimationStatus.dismissed) {
+        controller.dispose();
+        if (_cameraAnimController == controller) _cameraAnimController = null;
+      }
+    });
+
+    controller.forward();
+  }
+
+  void _animatedMapRotate(double destRotation) {
+    _rotationAnimController?.stop();
+    _rotationAnimController?.dispose();
+
+    final camera = _mapController.camera;
+    final rotTween = Tween<double>(begin: camera.rotation, end: destRotation);
+
+    final controller = AnimationController(
+      duration: const Duration(milliseconds: 400),
+      vsync: this,
+    );
+    _rotationAnimController = controller;
+
+    final animation = CurvedAnimation(parent: controller, curve: Curves.easeOutCubic);
+
+    controller.addListener(() {
+      _mapController.rotate(rotTween.evaluate(animation));
+    });
+
+    animation.addStatusListener((status) {
+      if (status == AnimationStatus.completed || status == AnimationStatus.dismissed) {
+        controller.dispose();
+        if (_rotationAnimController == controller) _rotationAnimController = null;
+      }
+    });
+
+    controller.forward();
+  }
+
 
   Color _parseColorHex(String? hex, Color fallback) {
     if (hex == null || hex.isEmpty) return fallback;
@@ -191,9 +260,9 @@ class _MarketMapScreenState extends State<MarketMapScreen> {
           _userPosition = newPos;
           _hasRealGps = true;
 
-          // Se o modo seguir estiver ativado (e nenhum mercado específico estava focado inicialmente), move a câmera
+          // Se o modo seguir estiver ativado (e nenhum mercado específico estava focado inicialmente), desliza a câmera suavemente
           if (_isFollowingUser && widget.initialFocusMarket == null) {
-            _mapController.move(_userPosition, _mapController.camera.zoom);
+            _animatedMapMove(_userPosition, _mapController.camera.zoom);
           }
 
           // Atualiza as distâncias de todos os mercados em tempo real
@@ -562,7 +631,7 @@ class _MarketMapScreenState extends State<MarketMapScreen> {
       _isFollowingUser = true;
     });
     final targetZoom = _mapController.camera.zoom < 14.5 ? 15.5 : _mapController.camera.zoom;
-    _mapController.move(_userPosition, targetZoom);
+    _animatedMapMove(_userPosition, targetZoom);
   }
 
   /// Seleciona um supermercado no mapa: exibe o nome no pin e sincroniza o card inferior.
@@ -579,7 +648,7 @@ class _MarketMapScreenState extends State<MarketMapScreen> {
 
     if (market.latitude != null && market.longitude != null) {
       final targetZoom = _mapController.camera.zoom < 14.5 ? 15.2 : _mapController.camera.zoom;
-      _mapController.move(LatLng(market.latitude!, market.longitude!), targetZoom);
+      _animatedMapMove(LatLng(market.latitude!, market.longitude!), targetZoom);
     }
 
     final index = _filteredMarkets.indexWhere((m) => m.supermarketName == market.supermarketName);
@@ -1908,7 +1977,8 @@ class _MarketMapScreenState extends State<MarketMapScreen> {
           width: 90,
           height: 48,
           alignment: Alignment.center,
-          child: GestureDetector(
+          child: RepaintBoundary(
+            child: GestureDetector(
             onTap: () => _selectMarket(market, openBottomSheet: false),
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -1958,7 +2028,8 @@ class _MarketMapScreenState extends State<MarketMapScreen> {
               ],
             ),
           ),
-        );
+        ),
+      );
       }
 
       // Pin padrão limpo e leve (sem texto), com RepaintBoundary para 60fps constantes
@@ -1995,7 +2066,8 @@ class _MarketMapScreenState extends State<MarketMapScreen> {
       width: 38,
       height: 38,
       alignment: Alignment.center,
-      child: Stack(
+      child: RepaintBoundary(
+        child: Stack(
         clipBehavior: Clip.none,
         alignment: Alignment.center,
         children: [
@@ -2069,6 +2141,7 @@ class _MarketMapScreenState extends State<MarketMapScreen> {
           ),
         ],
       ),
+      ),
     );
   }
 
@@ -2095,16 +2168,22 @@ class _MarketMapScreenState extends State<MarketMapScreen> {
       ),
     );
 
-    // 2. Marcadores dos Mercados (não selecionados primeiro, selecionado por último para ficar no topo;
-    // limita a 180 pins simultâneos no canvas para manter 60fps constantes em áreas metropolitanas densas)
+    // 2. Marcadores dos Mercados (com deduplicação de sobreposição geográfica para eliminar redundâncias e manter 60-120fps)
     MarketComparison? selectedForTop;
     int renderedPins = 0;
+    final Set<String> renderedCoords = {};
+
     for (var market in _filteredMarkets) {
       if (market.latitude == null || market.longitude == null) continue;
       if (_selectedMarket?.supermarketName == market.supermarketName) {
         selectedForTop = market;
         continue;
       }
+      // Deduplicação: se houver dois marcadores na mesmíssima coordenada (< 0.0001 graus / ~10 metros), exibe apenas um
+      final coordKey = '${market.latitude!.toStringAsFixed(4)}_${market.longitude!.toStringAsFixed(4)}';
+      if (renderedCoords.contains(coordKey)) continue;
+      renderedCoords.add(coordKey);
+
       if (_showMarketPins && renderedPins < 180) {
         markers.add(_buildMarketMarker(market, primary, cardColor, isDark));
         renderedPins++;
@@ -2178,9 +2257,12 @@ class _MarketMapScreenState extends State<MarketMapScreen> {
               minZoom: 4,
               maxZoom: 19,
               interactionOptions: const InteractionOptions(
-                flags: InteractiveFlag.all & ~InteractiveFlag.rotate,
+                flags: InteractiveFlag.all,
               ),
               onPositionChanged: (camera, hasGesture) {
+                if ((camera.rotation - _mapRotation).abs() > 0.5) {
+                  setState(() => _mapRotation = camera.rotation);
+                }
                 if (hasGesture && _isFollowingUser) {
                   setState(() {
                     _isFollowingUser = false;
@@ -2548,6 +2630,49 @@ class _MarketMapScreenState extends State<MarketMapScreen> {
             ),
           ),
 
+
+          // 🧭 Bússola interativa: surge ao rotacionar com 2 dedos para alinhar o Norte com 1 toque
+          if (_mapRotation.abs() > 1.0)
+            Positioned(
+              top: 86,
+              right: 14,
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(22),
+                  onTap: () => _animatedMapRotate(0.0),
+                  child: Container(
+                    width: 42,
+                    height: 42,
+                    decoration: BoxDecoration(
+                      color: cardColor.withValues(alpha: 0.95),
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.grey.withValues(alpha: 0.25), width: 1.2),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.18),
+                          blurRadius: 6,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    child: Center(
+                      child: Transform.rotate(
+                        angle: -(_mapRotation * (3.141592653589793 / 180.0)),
+                        child: const Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.navigation_rounded, color: Colors.redAccent, size: 20),
+                            Text('N', style: TextStyle(fontSize: 8, fontWeight: FontWeight.bold, color: Colors.redAccent)),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+
           // 🔘 BOTÕES FLUTUANTES LATERAIS (CAMADAS GOOGLE MAPS, ESCOLHER NO MAPA, ENQUADRAR & GPS)
           Positioned(
             right: 16,
@@ -2655,7 +2780,7 @@ class _MarketMapScreenState extends State<MarketMapScreen> {
                   final m = _filteredMarkets[idx];
                   setState(() => _selectedMarket = m);
                   if (m.latitude != null && m.longitude != null) {
-                    _mapController.move(LatLng(m.latitude!, m.longitude!), _mapController.camera.zoom);
+                    _animatedMapMove(LatLng(m.latitude!, m.longitude!), _mapController.camera.zoom);
                   }
                 },
                 itemBuilder: (ctx, idx) {
