@@ -176,7 +176,22 @@ class PdfExportService {
               ),
             ),
             pw.SizedBox(height: 16),
-            if (groupByCategories)
+            if (items.isEmpty)
+              pw.Container(
+                margin: const pw.EdgeInsets.symmetric(vertical: 20),
+                padding: const pw.EdgeInsets.all(24),
+                decoration: pw.BoxDecoration(
+                  border: pw.Border.all(color: PdfColors.grey300, width: 1),
+                  borderRadius: const pw.BorderRadius.all(pw.Radius.circular(12)),
+                ),
+                child: pw.Center(
+                  child: pw.Text(
+                    'Lista em branco - Pronta para anotações e compras',
+                    style: const pw.TextStyle(color: PdfColors.grey600, fontSize: 12),
+                  ),
+                ),
+              )
+            else if (groupByCategories)
               ..._buildGroupedItems(items, emojiFont, primaryColor, showFinancials)
             else
               ...items.map((item) => _buildItemRow(item, emojiFont, primaryColor, showFinancials)),

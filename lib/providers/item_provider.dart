@@ -922,6 +922,19 @@ class ItemProvider with ChangeNotifier {
     }
   }
   final UserSheetsService _service = UserSheetsService();
+
+  Future<String?> getActiveSpreadsheetId() => _service.getActiveSpreadsheetId();
+  Future<String?> getActiveSpreadsheetUrl() => _service.getActiveSpreadsheetUrl();
+  Future<bool> shareSpreadsheetWithEmail(String email, {bool asWriter = true}) =>
+      _service.shareSpreadsheetWithEmail(email, asWriter: asWriter);
+  Future<String?> makeSpreadsheetPublicWithLink() => _service.makeSpreadsheetPublicWithLink();
+  Future<bool> isUsingCustomSharedSpreadsheet() => _service.isUsingCustomSharedSpreadsheet();
+  Future<void> restoreDefaultSpreadsheet() async {
+    await resetToDefaultSpreadsheet();
+  }
+  Future<void> connectToSharedSpreadsheet(String rawUrlOrId) async {
+    await setCustomSpreadsheet(rawUrlOrId);
+  }
   final NotificationService _notificationService = NotificationService();
   
   /// Local memory cache for items indexed by month title.

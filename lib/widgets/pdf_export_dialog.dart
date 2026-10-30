@@ -49,7 +49,7 @@ class _PdfExportDialogState extends State<PdfExportDialog> {
       return _exportPending;
     }).toList();
 
-    if (itemsToExport.isEmpty) {
+    if (itemsToExport.isEmpty && widget.provider.items.isNotEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Nenhum item selecionado para exportação.')),
       );

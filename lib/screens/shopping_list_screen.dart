@@ -908,13 +908,43 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> with SingleTick
                   final result = await Navigator.push<String>(context, MaterialPageRoute(builder: (_) => const BarcodeScannerScreen()));
                   
                   if (result != null) {
-                    final cleanBarcode = Item.parseBarcode(result) ?? result.trim();
+                    final trimmed = result.trim();
+                    if (trimmed.isEmpty) return;
+
+                    // Padrão A: Convite de Lista Compartilhada
+                    if (trimmed.startsWith('carrin://pair') || trimmed.contains('carrin.app/pair')) {
+                      if (!context.mounted) return;
+                      SharedListPairingSheet.show(
+                        context,
+                        listName: itemProvider.currentMonth,
+                        activeUserEmail: itemProvider.activeUserEmail ?? 'anonimo',
+                      );
+                      return;
+                    }
+
+                    // Padrão B: Cupom Fiscal Eletrônico NFC-e / Danfe
+                    final isReceipt = trimmed.contains('sefaz') ||
+                        trimmed.contains('fazenda') ||
+                        RegExp(r'[?&]p=[0-9]{44}').hasMatch(trimmed) ||
+                        (RegExp(r'^[0-9]{44}$').hasMatch(trimmed));
+                    if (isReceipt) {
+                      if (!context.mounted) return;
+                      _handleScannedReceiptQr(context, trimmed, itemProvider);
+                      return;
+                    }
+
+                    final cleanBarcode = Item.parseBarcode(trimmed) ?? trimmed;
                     if (cleanBarcode.isEmpty) return;
 
-                    // 1. Procura se o item já está na lista atual com esse barcode direto
+                    // Padrão C: Etiqueta de Balança / Peso / Preço Variável
+                    final scaleInfo = BarcodeLookupService.instance.parseScaleBarcode(cleanBarcode);
+                    final searchBc = scaleInfo != null ? scaleInfo.baseCode : cleanBarcode;
+
+                    // 1. Procura se o item já está na lista atual com esse barcode direto ou base de balança
                     Item? matchedItem;
                     for (var it in itemProvider.items) {
-                      if (Item.parseBarcode(it.barcode) == cleanBarcode) {
+                      final itBc = Item.parseBarcode(it.barcode);
+                      if (itBc == cleanBarcode || (scaleInfo != null && itBc == searchBc)) {
                         matchedItem = it;
                         break;
                       }
@@ -922,6 +952,9 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> with SingleTick
 
                     // 2. Verifica cache síncrono (local ou API já em memória) sem bloquear
                     final cachedInfo = BarcodeLookupService.instance.getCachedOrLocal(
+                      searchBc,
+                      itemProvider: itemProvider,
+                    ) ?? BarcodeLookupService.instance.getCachedOrLocal(
                       cleanBarcode,
                       itemProvider: itemProvider,
                     );
@@ -949,18 +982,19 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> with SingleTick
                         context,
                         matchedItem,
                         scannedBarcode: cleanBarcode,
+                        prefilledPrice: scaleInfo?.price,
                       );
                     } else {
-                      // Vai direto para o menu de edição de produto (se ainda não estiver no cache local, busca na API em tempo real dentro do modal!)
-                      final lastPrice = cachedInfo?.lastPrice;
+                      // Vai direto para o menu de edição de produto
+                      final lastPrice = scaleInfo?.price ?? cachedInfo?.lastPrice;
                       _showEditDialog(
                         context,
                         null,
                         scannedBarcode: cleanBarcode,
-                        prefilledName: cachedInfo?.name,
-                        prefilledCategory: cachedInfo?.category,
+                        prefilledName: cachedInfo?.name ?? (scaleInfo != null ? 'Item de Balança / Açougue' : null),
+                        prefilledCategory: cachedInfo?.category ?? (scaleInfo != null ? 'Açougue' : null),
                         prefilledPrice: (lastPrice != null && lastPrice > 0) ? lastPrice : null,
-                        lookupOnlineOnOpen: cachedInfo == null,
+                        lookupOnlineOnOpen: cachedInfo == null && scaleInfo == null,
                       );
                     }
                   }
@@ -1643,10 +1677,10 @@ if (_isMarketLocked)
     final productFromBc = cleanScannedBarcode != null ? provider.findProductByBarcode(cleanScannedBarcode) : null;
     
     final initialName = activeItem?.name ?? prefilledName ?? (productFromBc != null ? productFromBc['name'] as String : '');
-    final initialPrice = (activeItem != null && activeItem.unitPrice != 0) 
-        ? Utils.formatCurrencyInput(activeItem.unitPrice) 
-        : (prefilledPrice != null && prefilledPrice > 0)
-            ? Utils.formatCurrencyInput(prefilledPrice)
+    final initialPrice = (prefilledPrice != null && prefilledPrice > 0)
+        ? Utils.formatCurrencyInput(prefilledPrice)
+        : (activeItem != null && activeItem.unitPrice != 0) 
+            ? Utils.formatCurrencyInput(activeItem.unitPrice) 
             : (productFromBc != null && (productFromBc['price'] as num) > 0 ? Utils.formatCurrencyInput((productFromBc['price'] as num).toDouble()) : '');
     final nameController = TextEditingController(text: initialName);
     final priceController = TextEditingController(text: initialPrice);
@@ -1856,17 +1890,24 @@ if (_isMarketLocked)
                           final result = await Navigator.push<String>(context, MaterialPageRoute(builder: (_) => const BarcodeScannerScreen()));
                           if (result != null) {
                             final cleanBc = Item.parseBarcode(result) ?? result.trim();
-                            final cached = BarcodeLookupService.instance.getCachedOrLocal(cleanBc, itemProvider: prov);
+                            final scaleInfo = BarcodeLookupService.instance.parseScaleBarcode(cleanBc);
+                            final searchBc = scaleInfo != null ? scaleInfo.baseCode : cleanBc;
+                            final cached = BarcodeLookupService.instance.getCachedOrLocal(searchBc, itemProvider: prov) ??
+                                BarcodeLookupService.instance.getCachedOrLocal(cleanBc, itemProvider: prov);
                             setState(() {
                               currentBarcode = cleanBc;
                               barcodeController.text = cleanBc;
                               barcodeController.selection = TextSelection.collapsed(offset: cleanBc.length);
+                              if (scaleInfo != null && scaleInfo.price != null && scaleInfo.price! > 0) {
+                                priceController.text = Utils.formatCurrencyInput(scaleInfo.price!);
+                                priceController.selection = TextSelection.collapsed(offset: priceController.text.length);
+                              }
                               if (cached != null) {
                                 filledFromBarcode = true;
                                 nameController.text = cached.name;
                                 nameController.selection = TextSelection.collapsed(offset: cached.name.length);
                                 category = cached.category;
-                                if (cached.lastPrice != null && cached.lastPrice! > 0) {
+                                if ((scaleInfo == null || scaleInfo.price == null) && cached.lastPrice != null && cached.lastPrice! > 0) {
                                   priceController.text = Utils.formatCurrencyInput(cached.lastPrice!);
                                   priceController.selection = TextSelection.collapsed(offset: priceController.text.length);
                                 }
@@ -2197,14 +2238,51 @@ if (_isMarketLocked)
     );
   }
 
-  void _shareList(BuildContext context, ItemProvider provider) {
-    if (provider.items.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('A lista está vazia!')),
-      );
-      return;
-    }
+  void _handleScannedReceiptQr(BuildContext context, String rawUrlOrKey, ItemProvider itemProvider) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        title: const Row(
+          children: [
+            Icon(Icons.receipt_long_rounded, color: Colors.teal),
+            SizedBox(width: 10),
+            Text('Nota Fiscal NFC-e', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+          ],
+        ),
+        content: const Text(
+          'A câmera identificou um Cupom Fiscal Eletrônico (NFC-e).\n\nDeseja abrir a tela de importação e conferência de notas fiscais?',
+          style: TextStyle(fontSize: 14),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancelar', style: TextStyle(color: Colors.grey)),
+          ),
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.teal,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+            onPressed: () {
+              Navigator.pop(ctx);
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => const ReceiptScannerScreen(),
+                ),
+              );
+            },
+            icon: const Icon(Icons.arrow_forward_rounded, size: 18),
+            label: const Text('Abrir Cupom'),
+          ),
+        ],
+      ),
+    );
+  }
 
+  void _shareList(BuildContext context, ItemProvider provider) {
     _showAnimatedDialog(
       context,
       AlertDialog(
@@ -2287,9 +2365,16 @@ if (_isMarketLocked)
 
   void _shareViaWhatsApp(BuildContext context, ItemProvider provider) {
     if (provider.items.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('A lista está vazia!')),
-      );
+      final buffer = StringBuffer();
+      final monthName = provider.currentMonth;
+      buffer.writeln('🛒 *Lista de Compras: $monthName*');
+      buffer.writeln('─────────────────────────');
+      buffer.writeln('📝 _Esta lista ainda não possui itens cadastrados._');
+      if (provider.budget > 0) {
+        buffer.writeln('• Orçamento Definido: ${Utils.formatCurrency(provider.budget)}');
+      }
+      buffer.writeln('\n_Gerado pelo Carrin_ 🛒');
+      Share.share(buffer.toString(), subject: 'Lista de Compras: $monthName');
       return;
     }
 

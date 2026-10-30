@@ -106,6 +106,80 @@ class UserSheetsService {
     return prefs.getString('custom_spreadsheet_id');
   }
 
+  /// Retorna o ID da planilha ativa (garante existência no Google Drive caso necessário).
+  Future<String?> getActiveSpreadsheetId() async {
+    try {
+      await _ensureSpreadsheetExists();
+      return _spreadsheetId;
+    } catch (e) {
+      debugPrint('Erro ao obter spreadsheetId ativo: \$e');
+      return null;
+    }
+  }
+
+  /// Retorna a URL completa de edição da planilha no Google Docs.
+  Future<String?> getActiveSpreadsheetUrl() async {
+    final id = await getActiveSpreadsheetId();
+    if (id == null) return null;
+    return 'https://docs.google.com/spreadsheets/d/\$id/edit';
+  }
+
+  /// Compartilha a planilha ativa diretamente com outro usuário Google (via Google Drive Permissions API).
+  Future<bool> shareSpreadsheetWithEmail(String email, {bool asWriter = true}) async {
+    final driveApi = _driveApi;
+    final ssId = await getActiveSpreadsheetId();
+    if (driveApi == null || ssId == null) return false;
+
+    try {
+      final permission = drive.Permission(
+        role: asWriter ? 'writer' : 'reader',
+        type: 'user',
+        emailAddress: email.trim(),
+      );
+      await driveApi.permissions.create(
+        permission,
+        ssId,
+        sendNotificationEmail: true,
+      );
+      return true;
+    } catch (e) {
+      debugPrint('Erro ao compartilhar planilha com \$email: \$e');
+      return false;
+    }
+  }
+
+  /// Concede permissão de edição para qualquer pessoa com o link da planilha no Google Drive.
+  Future<String?> makeSpreadsheetPublicWithLink() async {
+    final driveApi = _driveApi;
+    final ssId = await getActiveSpreadsheetId();
+    if (driveApi == null || ssId == null) return null;
+
+    try {
+      final permission = drive.Permission(
+        role: 'writer',
+        type: 'anyone',
+      );
+      await driveApi.permissions.create(
+        permission,
+        ssId,
+      );
+    } catch (e) {
+      debugPrint('Aviso ao liberar link publico no Google Drive: \$e');
+    }
+    return 'https://docs.google.com/spreadsheets/d/\$ssId/edit';
+  }
+
+  /// Verifica se o usuário está conectado a uma planilha compartilhada (personalizada).
+  Future<bool> isUsingCustomSharedSpreadsheet() async {
+    final custom = await getCustomSpreadsheetId();
+    return custom != null && custom.trim().isNotEmpty;
+  }
+
+  /// Restaura para a planilha padrão pessoal do usuário no Google Drive.
+  Future<void> restoreDefaultSpreadsheet() async {
+    await setCustomSpreadsheetId(null);
+  }
+
   bool _isDummyTabName(String title) {
     final lower = title.trim().toLowerCase();
     return lower.isEmpty ||

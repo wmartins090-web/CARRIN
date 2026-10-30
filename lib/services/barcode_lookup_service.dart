@@ -31,11 +31,80 @@ class ScannedProductInfo {
 
 /// Serviço inteligente para identificar produtos a partir do código de barras
 /// Consultando histórico local do usuário e bases abertas (Open Food Facts, Open Beauty Facts, Open Products Facts)
+/// Estrutura para códigos de barra de balança (açougue, padaria, frios, hortifrúti)
+class ScaleBarcodeInfo {
+  final String rawBarcode;
+  final String baseCode;
+  final double? price;
+  final double? weightKg;
+
+  const ScaleBarcodeInfo({
+    required this.rawBarcode,
+    required this.baseCode,
+    this.price,
+    this.weightKg,
+  });
+}
+
 class BarcodeLookupService {
   BarcodeLookupService._privateConstructor();
   static final BarcodeLookupService instance = BarcodeLookupService._privateConstructor();
 
   final Map<String, ScannedProductInfo> _cache = {};
+
+  /// Identifica o padrão técnico do código de leitura escaneado
+  static String identifyBarcodePattern(String raw) {
+    final clean = raw.trim();
+    if (clean.startsWith('carrin://pair') || clean.contains('carrin.app/pair')) {
+      return 'Convite de Lista Compartilhada';
+    }
+    if (clean.contains('sefaz') || clean.contains('fazenda') || RegExp(r'[?&]p=[0-9]{44}').hasMatch(clean)) {
+      return 'Cupom Fiscal NFC-e (SEFAZ)';
+    }
+    final digits = clean.replaceAll(RegExp(r'\D'), '');
+    if (digits.length == 44) {
+      return 'Chave de Acesso Danfe/NFC-e';
+    }
+    if (digits.length == 13) {
+      if (digits.startsWith('2')) {
+        return 'Etiqueta de Balança (Açougue/Padaria)';
+      }
+      if (digits.startsWith('789') || digits.startsWith('790')) {
+        return 'EAN-13 Brasil (GS1)';
+      }
+      return 'EAN-13 Internacional';
+    }
+    if (digits.length == 8) {
+      return 'EAN-8 (Compacto)';
+    }
+    if (digits.length == 12) {
+      return 'UPC-A (Importado)';
+    }
+    if (digits.length == 14) {
+      return 'ITF-14 / Caixa Atacado';
+    }
+    if (clean.startsWith('http://') || clean.startsWith('https://')) {
+      return 'QR Code / Link Web';
+    }
+    return 'Código de Barras (Padrão 1D/2D)';
+  }
+
+  /// Extrai informações de etiquetas de balança brasileiras (EAN-13 iniciando com 2)
+  ScaleBarcodeInfo? parseScaleBarcode(String barcode) {
+    final clean = barcode.replaceAll(RegExp(r'\D'), '');
+    if (clean.length == 13 && clean.startsWith('2')) {
+      final baseCode = clean.substring(0, 6);
+      final valuePart = clean.substring(6, 11);
+      final cents = int.tryParse(valuePart);
+      final price = (cents != null && cents > 0) ? cents / 100.0 : null;
+      return ScaleBarcodeInfo(
+        rawBarcode: clean,
+        baseCode: baseCode,
+        price: price,
+      );
+    }
+    return null;
+  }
 
   /// Retorna imediatamente se o código de barras já estiver em cache ou no histórico local
   ScannedProductInfo? getCachedOrLocal(String barcode, {ItemProvider? itemProvider}) {
