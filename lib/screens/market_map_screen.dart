@@ -488,9 +488,10 @@ class _MarketMapScreenState extends State<MarketMapScreen> {
     setState(() => _isLoadingDeals = true);
     final deals = await CommunityPriceService.instance.getTopDealsForMarket(
       marketName,
-      limit: 6,
+      limit: 15,
       userLat: _userPosition.latitude,
       userLng: _userPosition.longitude,
+      syncWithCloud: true,
     );
     if (mounted) {
       setState(() {

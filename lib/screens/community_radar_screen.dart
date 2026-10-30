@@ -24,7 +24,7 @@ class _CommunityRadarScreenState extends State<CommunityRadarScreen>
   final TextEditingController _searchController = TextEditingController();
   final TextEditingController _marketSearchController = TextEditingController();
 
-  double _radiusKm = 15.0;
+  double _radiusKm = 25.0;
   bool _isLoading = false;
   bool _isSyncingBackground = false;
   double? _userLat;
@@ -212,35 +212,44 @@ class _CommunityRadarScreenState extends State<CommunityRadarScreen>
       final lat = _userLat ?? CommunityPriceService.defaultStoreLat;
       final lng = _userLng ?? CommunityPriceService.defaultStoreLng;
 
-      // 1. Lê o feed local (sem chamada HTTP)
-      final feed = await CommunityPriceService.instance.getRecentFeed(
+      // 1. Lê todos os preços locais em raio amplo de 50km
+      final allPrices50km = await CommunityPriceService.instance.getRecentFeed(
         userLat: lat,
         userLng: lng,
-        radiusKm: _radiusKm,
+        radiusKm: 50.0,
         syncWithCloud: false,
       );
 
-      // 2. Calcula os mercados do raio reutilizando a mesma lista em memória
+      final maxMeters = _radiusKm * 1000;
+      // Filtra o feed respeitando o raio ativo, exceto se um mercado específico foi selecionado
+      final feed = allPrices50km.where((p) {
+        if (_selectedMarketFilter != 'Todos') {
+          return p.supermarketName.toLowerCase() == _selectedMarketFilter.toLowerCase() ||
+                 DefaultSupermarketsData.matchesSearch(p.supermarketName, _selectedMarketFilter);
+        }
+        if (p.distanceMeters == null) return true;
+        return p.distanceMeters! <= maxMeters;
+      }).toList();
+
+      // 2. Calcula os mercados do raio reutilizando os preços dentro do raio
       final markets = await CommunityPriceService.instance.getCheapestMarketsNearby(
         userLat: lat,
         userLng: lng,
         radiusKm: _radiusKm,
-        preloadedPrices: feed,
+        preloadedPrices: allPrices50km.where((p) => p.distanceMeters == null || p.distanceMeters! <= maxMeters).toList(),
         syncWithCloud: false,
       );
 
-      // Carrega lista expandida (50km) para pesquisas por nome ou filtro de rede na aba Mercados
-      final allCatalog = _radiusKm >= 50.0
-          ? markets
-          : await CommunityPriceService.instance.getCheapestMarketsNearby(
-              userLat: lat,
-              userLng: lng,
-              radiusKm: 50.0,
-              preloadedPrices: feed,
-              syncWithCloud: false,
-            );
+      // Carrega catálogo completo com todos os preços de 50km
+      final allCatalog = await CommunityPriceService.instance.getCheapestMarketsNearby(
+        userLat: lat,
+        userLng: lng,
+        radiusKm: 50.0,
+        preloadedPrices: allPrices50km,
+        syncWithCloud: false,
+      );
 
-      // 3. Calcula todas as comparações de produtos reutilizando o mesmo feed em memória
+      // 3. Calcula todas as comparações de produtos
       final allComps = await CommunityPriceService.instance.getAllProductComparisons(
         userLat: lat,
         userLng: lng,
@@ -256,7 +265,7 @@ class _CommunityRadarScreenState extends State<CommunityRadarScreen>
           userLat: lat,
           userLng: lng,
           radiusKm: _radiusKm,
-          preloadedPrices: feed,
+          preloadedPrices: allPrices50km,
           syncWithCloud: false,
         );
       }
@@ -801,6 +810,9 @@ class _CommunityRadarScreenState extends State<CommunityRadarScreen>
     if (!seenMarkets.contains(CommunityPriceService.defaultStoreName.toLowerCase())) {
       availableMarkets.add(CommunityPriceService.defaultStoreName);
     }
+    if (_selectedMarketFilter != 'Todos' && !seenMarkets.contains(_selectedMarketFilter.toLowerCase())) {
+      availableMarkets.add(_selectedMarketFilter);
+    }
 
     // 2. Filtro de mercado e busca
     final query = _searchController.text.trim().toLowerCase();
@@ -808,7 +820,10 @@ class _CommunityRadarScreenState extends State<CommunityRadarScreen>
 
     if (_selectedMarketFilter != 'Todos') {
       final filter = _selectedMarketFilter.toLowerCase();
-      displayedFeed = displayedFeed.where((p) => p.supermarketName.toLowerCase() == filter).toList();
+      displayedFeed = displayedFeed.where((p) =>
+        p.supermarketName.toLowerCase() == filter ||
+        DefaultSupermarketsData.matchesSearch(p.supermarketName, filter)
+      ).toList();
     }
 
     if (query.isNotEmpty) {

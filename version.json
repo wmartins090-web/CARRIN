@@ -1,14 +1,14 @@
 {
-  "version": "1.3.586",
-  "build_number": 586,
+  "version": "1.3.587",
+  "build_number": 587,
   "release_date": "2026-10-29",
-  "title": "CARRIN v1.3.586",
+  "title": "CARRIN v1.3.587",
   "release_notes": [
-    "Mapa e Busca de Mercados: correção da navegação para mercados fora do raio padrão (ex: Supermarket de Alcântara)",
-    "Filtro inteligente com suporte a preposições em português (de, da, do, no, na, etc.) no catálogo e pesquisa",
-    "Expansão automática de raio e remoção de redirecionamento incorreto para lojas próximas (Icaraí)"
+    "Radar de Preços: sincronização e exibição completa dos preços registrados no Supermarket de Alcântara",
+    "Persistência de Mercado: correção para preservar o supermercado ativo ao adicionar ou editar produtos na lista",
+    "Novo seletor 'Escolher Mercado' na barra superior: permite definir facilmente onde você está comprando mesmo sem GPS"
   ],
-  "apk_url": "https://github.com/hollopocran/CARRIN/releases/download/v1.3.586/carrin_v1.3.586.apk",
+  "apk_url": "https://github.com/hollopocran/CARRIN/releases/download/v1.3.587/carrin_v1.3.587.apk",
   "size_bytes": 118255604,
   "is_active": true,
   "force_update": false

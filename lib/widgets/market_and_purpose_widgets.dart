@@ -1,3 +1,4 @@
+import '../services/default_supermarkets.dart';
 import 'package:flutter/material.dart';
 import 'package:share_plus/share_plus.dart';
 import '../providers/item_provider.dart';
@@ -148,6 +149,16 @@ class SupermarketChipBar extends StatelessWidget {
             );
           }),
 
+          // Button to choose supermarket from catalog
+          ActionChip(
+            avatar: const Icon(Icons.storefront_outlined, size: 14, color: Colors.teal),
+            label: const Text('Escolher Mercado', style: TextStyle(fontSize: 11, color: Colors.teal, fontWeight: FontWeight.bold)),
+            onPressed: () => _handleChooseMarket(context, provider),
+            backgroundColor: Colors.teal.withValues(alpha: 0.08),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+          ),
+          const SizedBox(width: 6),
+
           // Button to detect GPS / save current location
           ActionChip(
             avatar: provider.isDetectingLocation
@@ -164,6 +175,15 @@ class SupermarketChipBar extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+
+  static void _handleChooseMarket(BuildContext context, ItemProvider provider) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => _MarketPickerDialog(provider: provider),
     );
   }
 
@@ -715,6 +735,200 @@ class _PurposeAndCapsDialogState extends State<PurposeAndCapsDialog> {
           child: const Text('Salvar Metas', style: TextStyle(fontWeight: FontWeight.bold)),
         ),
       ],
+    );
+  }
+}
+
+
+class _MarketPickerDialog extends StatefulWidget {
+  final ItemProvider provider;
+  const _MarketPickerDialog({required this.provider});
+
+  @override
+  State<_MarketPickerDialog> createState() => _MarketPickerDialogState();
+}
+
+class _MarketPickerDialogState extends State<_MarketPickerDialog> {
+  final TextEditingController _searchCtrl = TextEditingController();
+  String _filter = '';
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final cardColor = Theme.of(context).cardColor;
+    final primary = Theme.of(context).primaryColor;
+
+    final q = _filter.trim();
+    List<String> results = [];
+    if (q.isEmpty) {
+      final Set<String> popular = {
+        'Supermercados Guanabara - Niterói',
+        'Supermarket - Icaraí',
+        'Supermarket - Alcântara',
+        'Mundial - Jardim Icaraí',
+        'Assaí Atacadista - Alcântara',
+        'Atacadão - Alcântara',
+        'Carrefour - Alcântara',
+      };
+      for (var s in widget.provider.supermarkets) {
+        final n = s['name']?.toString().trim();
+        if (n != null && n.isNotEmpty) popular.add(n);
+      }
+      results = popular.toList();
+    } else {
+      final matches = <String>{};
+      for (var s in widget.provider.supermarkets) {
+        final n = s['name']?.toString().trim();
+        if (n != null && DefaultSupermarketsData.matchesSearch(n, q)) {
+          matches.add(n);
+        }
+      }
+      for (var pre in DefaultSupermarketsData.all) {
+        if (DefaultSupermarketsData.matchesSearch(pre.name, q, preloaded: pre)) {
+          matches.add(pre.name);
+          if (matches.length >= 35) break;
+        }
+      }
+      results = matches.toList();
+    }
+
+    return Container(
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.of(context).size.height * 0.75,
+      ),
+      padding: EdgeInsets.only(
+        bottom: MediaQuery.of(context).viewInsets.bottom,
+      ),
+      decoration: BoxDecoration(
+        color: cardColor,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            margin: const EdgeInsets.only(top: 12, bottom: 8),
+            width: 40,
+            height: 4,
+            decoration: BoxDecoration(
+              color: Colors.grey.withValues(alpha: 0.3),
+              borderRadius: BorderRadius.circular(8),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
+            child: Row(
+              children: [
+                Icon(Icons.storefront_rounded, color: primary, size: 24),
+                const SizedBox(width: 10),
+                const Text(
+                  'Escolher Supermercado',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: TextField(
+              controller: _searchCtrl,
+              autofocus: true,
+              decoration: InputDecoration(
+                hintText: 'Pesquise pelo nome, rede ou bairro...',
+                prefixIcon: const Icon(Icons.search),
+                suffixIcon: _filter.isNotEmpty
+                    ? IconButton(
+                        icon: const Icon(Icons.clear, size: 18),
+                        onPressed: () {
+                          _searchCtrl.clear();
+                          setState(() => _filter = '');
+                        },
+                      )
+                    : null,
+                filled: true,
+                fillColor: isDark ? Colors.grey[850] : Colors.grey[100],
+                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  borderSide: BorderSide.none,
+                ),
+              ),
+              onChanged: (val) => setState(() => _filter = val),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Flexible(
+            child: results.isEmpty
+                ? Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text('Nenhum mercado encontrado para "$q".', style: TextStyle(color: Colors.grey[600])),
+                        const SizedBox(height: 12),
+                        ElevatedButton.icon(
+                          icon: const Icon(Icons.add),
+                          label: Text('Usar "$q" como meu mercado'),
+                          onPressed: () {
+                            widget.provider.setSupermarketFilter(q);
+                            widget.provider.addOrUpdateSupermarket(name: q);
+                            Navigator.pop(context);
+                          },
+                        ),
+                      ],
+                    ),
+                  )
+                : ListView.separated(
+                    shrinkWrap: true,
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    itemCount: results.length,
+                    separatorBuilder: (_, __) => const Divider(height: 1),
+                    itemBuilder: (ctx, idx) {
+                      final name = results[idx];
+                      final pre = DefaultSupermarketsData.findMatch(name);
+                      final isSelected = widget.provider.selectedSupermarketFilter == name;
+
+                      return ListTile(
+                        dense: true,
+                        leading: CircleAvatar(
+                          radius: 16,
+                          backgroundColor: isSelected ? primary.withValues(alpha: 0.2) : Colors.grey.withValues(alpha: 0.1),
+                          child: Icon(Icons.storefront_outlined, size: 18, color: isSelected ? primary : Colors.grey[700]),
+                        ),
+                        title: Text(
+                          name,
+                          style: TextStyle(
+                            fontWeight: isSelected ? FontWeight.bold : FontWeight.w600,
+                            color: isSelected ? primary : null,
+                            fontSize: 13.5,
+                          ),
+                        ),
+                        subtitle: pre?.address != null ? Text(pre!.address!, style: const TextStyle(fontSize: 11), maxLines: 1, overflow: TextOverflow.ellipsis) : null,
+                        trailing: isSelected ? Icon(Icons.check_circle_rounded, color: primary, size: 20) : null,
+                        onTap: () {
+                          widget.provider.setSupermarketFilter(name);
+                          widget.provider.addOrUpdateSupermarket(name: name, latitude: pre?.latitude, longitude: pre?.longitude);
+                          Navigator.pop(context);
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              backgroundColor: Colors.green[800],
+                              content: Text('📍 Mercado ativo definido: $name!'),
+                              duration: const Duration(seconds: 2),
+                            ),
+                          );
+                        },
+                      );
+                    },
+                  ),
+          ),
+        ],
+      ),
     );
   }
 }

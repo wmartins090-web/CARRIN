@@ -822,26 +822,56 @@ class CommunityPriceService {
   /// Retorna as principais ofertas ou itens cadastrados de um supermercado específico
   Future<List<CommunityPrice>> getTopDealsForMarket(
     String marketName, {
-    int limit = 6,
+    int limit = 15,
     double? userLat,
     double? userLng,
+    bool syncWithCloud = false,
   }) async {
     final targetMatch = DefaultSupermarketsData.findMatch(marketName, userLat: userLat, userLng: userLng);
     final canonicalTarget = (targetMatch?.name ?? marketName).trim().toLowerCase();
     final cleanMarket = marketName.trim().toLowerCase();
 
-    final allPrices = await getRecentFeed(
+    var allPrices = await getRecentFeed(
       userLat: userLat,
       userLng: userLng,
       radiusKm: 50.0,
-      syncWithCloud: false,
+      syncWithCloud: syncWithCloud,
     );
-    final marketPrices = allPrices.where((p) {
+    var marketPrices = allPrices.where((p) {
       final pRaw = p.supermarketName.trim();
-      if (pRaw.toLowerCase() == cleanMarket || pRaw.toLowerCase() == canonicalTarget) return true;
+      if (pRaw.toLowerCase() == cleanMarket || pRaw.toLowerCase() == canonicalTarget) {
+        return true;
+      }
+      if (DefaultSupermarketsData.matchesSearch(pRaw, cleanMarket) ||
+          DefaultSupermarketsData.matchesSearch(pRaw, canonicalTarget)) {
+        return true;
+      }
       final pMatch = DefaultSupermarketsData.findMatch(pRaw, userLat: userLat, userLng: userLng);
       return pMatch != null && pMatch.name.toLowerCase() == canonicalTarget;
     }).toList();
+
+    // Se o cache local não tinha ofertas para este mercado, tenta sincronizar diretamente da nuvem
+    if (marketPrices.isEmpty && !syncWithCloud) {
+      allPrices = await getRecentFeed(
+        userLat: userLat,
+        userLng: userLng,
+        radiusKm: 50.0,
+        syncWithCloud: true,
+        forceCloudRefresh: true,
+      );
+      marketPrices = allPrices.where((p) {
+        final pRaw = p.supermarketName.trim();
+        if (pRaw.toLowerCase() == cleanMarket || pRaw.toLowerCase() == canonicalTarget) {
+          return true;
+        }
+        if (DefaultSupermarketsData.matchesSearch(pRaw, cleanMarket) ||
+            DefaultSupermarketsData.matchesSearch(pRaw, canonicalTarget)) {
+          return true;
+        }
+        final pMatch = DefaultSupermarketsData.findMatch(pRaw, userLat: userLat, userLng: userLng);
+        return pMatch != null && pMatch.name.toLowerCase() == canonicalTarget;
+      }).toList();
+    }
 
     // Remove produtos duplicados pelo nome, mantendo o menor preço
     final Map<String, CommunityPrice> uniqueByName = {};

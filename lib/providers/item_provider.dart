@@ -2213,6 +2213,10 @@ class ItemProvider with ChangeNotifier {
         ? item.barcode!.trim()
         : findBarcodeForProductName(item.name);
     
+    final String? effectiveSupermarket = (item.supermarket != null && item.supermarket!.trim().isNotEmpty)
+        ? item.supermarket!.trim()
+        : (_selectedSupermarketFilter ?? _detectedSupermarket?['name']);
+
     final nextIndex = _items.isEmpty ? 7 : (_items.last.index ?? 6) + 1;
     final newItem = Item(
       index: nextIndex,
@@ -2223,6 +2227,7 @@ class ItemProvider with ChangeNotifier {
       category: item.category,
       isBought: item.isBought,
       barcode: effectiveBarcode,
+      supermarket: effectiveSupermarket,
     );
     
     _items.add(newItem);
@@ -2280,7 +2285,13 @@ class ItemProvider with ChangeNotifier {
       final String? effectiveBarcode = (item.barcode != null && item.barcode!.trim().isNotEmpty)
           ? item.barcode!.trim()
           : findBarcodeForProductName(item.name);
-      final updatedItem = item.copyWith(barcode: effectiveBarcode);
+      final String? effectiveSupermarket = (item.supermarket != null && item.supermarket!.trim().isNotEmpty)
+          ? item.supermarket!.trim()
+          : (_selectedSupermarketFilter ?? _detectedSupermarket?['name']);
+      final updatedItem = item.copyWith(
+        barcode: effectiveBarcode,
+        supermarket: effectiveSupermarket,
+      );
 
       _items[idx] = updatedItem;
       _updateLocalMetrics(triggerItem: updatedItem, checkBudget: true);

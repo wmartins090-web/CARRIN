@@ -440,7 +440,7 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> with SingleTick
                               mainAxisSize: MainAxisSize.min,
                               children: [
                                 Text(itemProvider.currentMonth, style: const TextStyle(fontWeight: FontWeight.bold)),
-                                if (itemProvider.detectedSupermarket != null)
+                                if (itemProvider.selectedSupermarketFilter != null || itemProvider.detectedSupermarket != null)
                                   InkWell(
                                     onTap: () {
                                       Navigator.push(
@@ -452,8 +452,9 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> with SingleTick
                                     child: Padding(
                                       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
                                       child: Text(
-                                        '📍 ${itemProvider.detectedSupermarket!['name']} (Radar)',
+                                        '📍 ${itemProvider.selectedSupermarketFilter ?? itemProvider.detectedSupermarket!['name']}',
                                         style: const TextStyle(fontSize: 11, color: Colors.blue, fontWeight: FontWeight.w600),
+                                        overflow: TextOverflow.ellipsis,
                                       ),
                                     ),
                                   ),
