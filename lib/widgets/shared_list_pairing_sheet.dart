@@ -374,6 +374,7 @@ class _SharedListPairingSheetState extends State<SharedListPairingSheet>
             style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white),
             onPressed: () async {
               Navigator.pop(ctx);
+              Navigator.pop(context); // Fecha a folha para exibir imediatamente a lista importada
               await provider.importSharedListWithSpreadsheet(
                 title: payload.title,
                 spreadsheetId: payload.spreadsheetId,
@@ -382,7 +383,7 @@ class _SharedListPairingSheetState extends State<SharedListPairingSheet>
               );
               if (context.mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Lista "${payload.title}" criada e conectada com sucesso!'), backgroundColor: Colors.green),
+                  SnackBar(content: Text('Lista "${payload.title}" recebida com sucesso!'), backgroundColor: Colors.green),
                 );
               }
             },
@@ -415,7 +416,12 @@ class _SharedListPairingSheetState extends State<SharedListPairingSheet>
     setState(() => _isConnecting = true);
     try {
       final parsedId = UserSheetsService.extractSpreadsheetId(clean);
-      await provider.connectToSharedSpreadsheet(parsedId);
+      await provider.importSharedListWithSpreadsheet(
+        title: _selectedList,
+        spreadsheetId: parsedId,
+        fallbackItems: [],
+        budget: 0.0,
+      );
 
       if (mounted) {
         setState(() {
@@ -425,9 +431,10 @@ class _SharedListPairingSheetState extends State<SharedListPairingSheet>
           _spreadsheetUrl = 'https://docs.google.com/spreadsheets/d/$parsedId/edit';
         });
 
+        Navigator.pop(context); // Fecha a folha para exibir os itens na tela
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Conectado à Planilha Compartilhada com sucesso!'),
+          SnackBar(
+            content: Text('Lista "$_selectedList" conectada à planilha com sucesso!'),
             backgroundColor: Colors.green,
           ),
         );
@@ -587,10 +594,11 @@ class _SharedListPairingSheetState extends State<SharedListPairingSheet>
         right: 18,
         bottom: MediaQuery.of(context).viewInsets.bottom + 24,
       ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // Puxador central
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Puxador central
           Container(
             width: 44,
             height: 4.5,
@@ -669,9 +677,24 @@ class _SharedListPairingSheetState extends State<SharedListPairingSheet>
                     return PopupMenuButton<String>(
                       icon: const Icon(Icons.swap_horiz_rounded, size: 22),
                       tooltip: 'Trocar Lista',
-                      onSelected: (newMonth) {
+                      onSelected: (newMonth) async {
+                        final prov = Provider.of<ItemProvider>(context, listen: false);
+                        final items = await prov.getItemsForMonth(newMonth);
+                        final listBudget = (newMonth == prov.currentMonth) ? prov.budget : 0.0;
+                        final existingSsId = await prov.getDedicatedSpreadsheetIdForList(newMonth);
+
                         setState(() {
                           _selectedList = newMonth;
+                          _spreadsheetId = existingSsId;
+                          if (existingSsId != null && existingSsId.isNotEmpty) {
+                            _spreadsheetUrl = 'https://docs.google.com/spreadsheets/d/$existingSsId/edit';
+                          }
+                          _carrinPayloadUri = SharedListService.instance.encodeSingleList(
+                            title: newMonth,
+                            budget: listBudget,
+                            items: items,
+                            spreadsheetId: existingSsId,
+                          );
                         });
                         _updatePayloadForSelectedList();
                       },
@@ -757,7 +780,7 @@ class _SharedListPairingSheetState extends State<SharedListPairingSheet>
 
           // Conteúdo das Abas
           SizedBox(
-            height: 310,
+            height: 350,
             child: TabBarView(
               controller: _tabController,
               children: [
@@ -819,8 +842,9 @@ class _SharedListPairingSheetState extends State<SharedListPairingSheet>
           ),
         ],
       ),
-    );
-  }
+    ),
+  );
+}
 
   // 1. ABA NFC
   Widget _buildNfcTab(Color primary) {
@@ -937,7 +961,7 @@ class _SharedListPairingSheetState extends State<SharedListPairingSheet>
             child: QrImageView(
               data: qrData,
               version: QrVersions.auto,
-              size: 145.0,
+              size: 175.0,
             ),
           ),
           const SizedBox(height: 10),

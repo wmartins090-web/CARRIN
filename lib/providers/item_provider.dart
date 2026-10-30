@@ -1384,11 +1384,13 @@ class ItemProvider with ChangeNotifier {
     // 3. Alterna para esta lista
     await switchMonth(title);
 
-    // 4. Carrega os itens da planilha ou salva os itens locais
+    // 4. SEMPRE carrega os itens recebidos no banco local e na memória primeiro!
+    // Isso garante que o segundo celular exiba instantaneamente todos os produtos recebidos (0ms)
+    await importSharedItems(fallbackItems, replaceExisting: true, listTitle: title, newBudget: budget);
+
+    // 5. Se houver planilha dedicada e sincronização Google ativa, sincroniza em background
     if (spreadsheetId != null && spreadsheetId.isNotEmpty && isSyncEnabled) {
-      await loadItems(force: true);
-    } else {
-      await importSharedItems(fallbackItems, replaceExisting: true, listTitle: title, newBudget: budget);
+      _runBackgroundSync(title);
     }
     _safeNotify();
   }

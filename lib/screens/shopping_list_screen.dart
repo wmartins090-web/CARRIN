@@ -1,4 +1,5 @@
 import '../services/shared_list_service.dart';
+import '../services/user_sheets_service.dart';
 import 'market_map_screen.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
@@ -952,6 +953,27 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> with SingleTick
                         listName: itemProvider.currentMonth,
                         activeUserEmail: itemProvider.activeUserEmail ?? 'anonimo',
                       );
+                      return;
+                    }
+
+                    // Padrão Sheets: URL do Google Planilhas
+                    if (trimmed.contains('docs.google.com/spreadsheets/d/')) {
+                      final parsedId = UserSheetsService.extractSpreadsheetId(trimmed);
+                      if (!context.mounted) return;
+                      await itemProvider.importSharedListWithSpreadsheet(
+                        title: itemProvider.currentMonth,
+                        spreadsheetId: parsedId,
+                        fallbackItems: [],
+                        budget: 0.0,
+                      );
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text('Lista "${itemProvider.currentMonth}" conectada à planilha com sucesso!'),
+                            backgroundColor: Colors.green,
+                          ),
+                        );
+                      }
                       return;
                     }
 
