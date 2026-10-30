@@ -19,6 +19,7 @@ import '../widgets/floating_calculator_popup.dart';
 import '../widgets/shopping_filter_bottom_sheet.dart';
 import '../widgets/weight_calculator_dialog.dart';
 import '../widgets/pdf_export_dialog.dart';
+import '../widgets/shared_list_pairing_sheet.dart';
 import '../widgets/assistive_calculator_button.dart';
 import '../widgets/market_lock_overlay.dart';
 import '../widgets/market_and_purpose_widgets.dart';
@@ -2212,6 +2213,29 @@ if (_isMarketLocked)
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            ListTile(
+              contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              leading: Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.blue.withValues(alpha: 0.15),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.phonelink_ring_rounded, color: Colors.blue),
+              ),
+              title: const Text('Lista Compartilhada (NFC / QR)', style: TextStyle(fontWeight: FontWeight.bold)),
+              subtitle: const Text('Conecte outro aparelho para editar juntos em tempo real', style: TextStyle(fontSize: 12)),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              onTap: () {
+                Navigator.pop(context);
+                SharedListPairingSheet.show(
+                  context,
+                  listName: provider.currentMonth,
+                  activeUserEmail: provider.activeUserEmail ?? 'anonimo',
+                );
+              },
+            ),
+            const Divider(height: 16),
             ListTile(
               contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               leading: Container(
