@@ -112,16 +112,14 @@ class UserSheetsService {
       await _ensureSpreadsheetExists();
       return _spreadsheetId;
     } catch (e) {
-      debugPrint('Erro ao obter spreadsheetId ativo: \$e');
+      debugPrint('Erro ao obter spreadsheetId ativo: $e');
       return null;
     }
   }
 
-  /// Retorna a URL completa de edição da planilha no Google Docs.
+  /// Retorna a URL completa de edição da planilha no Google Docs já garantindo permissão pública de edição.
   Future<String?> getActiveSpreadsheetUrl() async {
-    final id = await getActiveSpreadsheetId();
-    if (id == null) return null;
-    return 'https://docs.google.com/spreadsheets/d/\$id/edit';
+    return await makeSpreadsheetPublicWithLink();
   }
 
   /// Compartilha a planilha ativa diretamente com outro usuário Google (via Google Drive Permissions API).
@@ -143,7 +141,7 @@ class UserSheetsService {
       );
       return true;
     } catch (e) {
-      debugPrint('Erro ao compartilhar planilha com \$email: \$e');
+      debugPrint('Erro ao compartilhar planilha com $email: $e');
       return false;
     }
   }
@@ -164,9 +162,9 @@ class UserSheetsService {
         ssId,
       );
     } catch (e) {
-      debugPrint('Aviso ao liberar link publico no Google Drive: \$e');
+      debugPrint('Aviso ao liberar link publico no Google Drive: $e');
     }
-    return 'https://docs.google.com/spreadsheets/d/\$ssId/edit';
+    return 'https://docs.google.com/spreadsheets/d/$ssId/edit';
   }
 
   /// Verifica se o usuário está conectado a uma planilha compartilhada (personalizada).
