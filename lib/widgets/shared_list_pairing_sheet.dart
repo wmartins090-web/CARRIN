@@ -1,15 +1,21 @@
+import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:nfc_manager/ndef_record.dart';
 import 'package:nfc_manager/nfc_manager.dart';
+import 'package:nfc_manager/nfc_manager_android.dart' as android_nfc;
+import 'package:nfc_manager/nfc_manager_ios.dart' as ios_nfc;
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../providers/item_provider.dart';
 import '../services/user_sheets_service.dart';
+import '../services/shared_list_service.dart';
 
-/// BottomSheet para Compartilhamento e Sincronização Direta de Lista via Google Sheets
-/// com QR Code com Permissão de Edição Pública automática, Link Copiável e NFC.
+/// BottomSheet para Compartilhamento e Sincronização de Lista
+/// com suporte completo a NFC (Aproximação Ativa), QR Code e Google Sheets.
 class SharedListPairingSheet extends StatefulWidget {
   final String listName;
   final String activeUserEmail;
@@ -44,23 +50,33 @@ class SharedListPairingSheet extends StatefulWidget {
   State<SharedListPairingSheet> createState() => _SharedListPairingSheetState();
 }
 
-class _SharedListPairingSheetState extends State<SharedListPairingSheet> {
+class _SharedListPairingSheetState extends State<SharedListPairingSheet>
+    with SingleTickerProviderStateMixin {
+  late TabController _tabController;
   final TextEditingController _enterLinkController = TextEditingController();
   final TextEditingController _emailController = TextEditingController();
 
   String? _spreadsheetId;
   String? _spreadsheetUrl;
-  bool _isLoadingSheetInfo = true;
+  late String _carrinPayloadUri;
   bool _isConnecting = false;
   bool _isUsingCustomSheet = false;
   bool _isSharingEmail = false;
 
+  // Modo do QR Code: true = Para o app CARRIN (dados completos), false = Para iPhone / Web (Google Sheets)
+  bool _qrForCarrinApp = true;
+
   bool _isNfcAvailable = false;
-  bool _isNfcListening = false;
+  bool _isNfcActive = false;
+  String _nfcStatusText = 'Toque em Transmitir ou Ler para iniciar o NFC';
 
   @override
   void initState() {
     super.initState();
+    _tabController = TabController(length: 3, vsync: this);
+
+    final provider = Provider.of<ItemProvider>(context, listen: false);
+    _carrinPayloadUri = SharedListService.instance.encodeList(provider);
 
     if (widget.initialCodeOrUri != null && widget.initialCodeOrUri!.trim().isNotEmpty) {
       _enterLinkController.text = widget.initialCodeOrUri!.trim();
@@ -72,7 +88,6 @@ class _SharedListPairingSheetState extends State<SharedListPairingSheet> {
 
   Future<void> _loadSpreadsheetData() async {
     final provider = Provider.of<ItemProvider>(context, listen: false);
-    setState(() => _isLoadingSheetInfo = true);
 
     try {
       final ssId = await provider.getActiveSpreadsheetId();
@@ -84,12 +99,9 @@ class _SharedListPairingSheetState extends State<SharedListPairingSheet> {
           _spreadsheetId = ssId;
           _spreadsheetUrl = ssUrl;
           _isUsingCustomSheet = isCustom;
-          _isLoadingSheetInfo = false;
         });
       }
-    } catch (_) {
-      if (mounted) setState(() => _isLoadingSheetInfo = false);
-    }
+    } catch (_) {}
   }
 
   Future<void> _checkNfcSupport() async {
@@ -97,57 +109,271 @@ class _SharedListPairingSheetState extends State<SharedListPairingSheet> {
       final availability = await NfcManager.instance.checkAvailability();
       if (mounted) {
         final isAvail = availability == NfcAvailability.enabled;
-        setState(() => _isNfcAvailable = isAvail);
-        if (isAvail) {
-          _startNfcBroadcasting();
-        }
+        setState(() {
+          _isNfcAvailable = isAvail;
+          if (isAvail) {
+            _startNfcSession(isTransmitMode: true);
+          } else {
+            _nfcStatusText = 'NFC desativado ou não suportado neste aparelho';
+          }
+        });
       }
     } catch (_) {
-      if (mounted) setState(() => _isNfcAvailable = false);
+      if (mounted) {
+        setState(() {
+          _isNfcAvailable = false;
+          _nfcStatusText = 'NFC não suportado neste dispositivo';
+        });
+      }
     }
   }
 
-  Future<void> _startNfcBroadcasting() async {
-    if (!_isNfcAvailable || _isNfcListening) return;
-    setState(() => _isNfcListening = true);
+  String? _extractTextFromNdefMessage(NdefMessage message) {
+    for (final record in message.records) {
+      try {
+        if (record.typeNameFormat == TypeNameFormat.wellKnown &&
+            record.type.length == 1 &&
+            record.type[0] == 0x55) {
+          // URI Record
+          final prefixCode = record.payload.isNotEmpty ? record.payload[0] : 0;
+          final body = record.payload.length > 1
+              ? utf8.decode(record.payload.sublist(1), allowMalformed: true)
+              : '';
+          final prefix = switch (prefixCode) {
+            1 => 'http://www.',
+            2 => 'https://www.',
+            3 => 'http://',
+            4 => 'https://',
+            _ => '',
+          };
+          return '$prefix$body';
+        } else {
+          final text = utf8.decode(record.payload, allowMalformed: true);
+          if (text.contains('carrin://') || text.contains('docs.google.com') || text.contains('{')) {
+            return text;
+          }
+        }
+      } catch (_) {}
+    }
+    return null;
+  }
+
+  Future<void> _startNfcSession({required bool isTransmitMode}) async {
+    if (!_isNfcAvailable) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('NFC não está disponível ou habilitado nas configurações deste aparelho.')),
+      );
+      return;
+    }
+
+    try {
+      NfcManager.instance.stopSession();
+    } catch (_) {}
+
+    setState(() {
+      _isNfcActive = true;
+      _nfcStatusText = isTransmitMode
+          ? 'Transmitindo via NFC... Aproxime a traseira do outro celular ou Tag NFC'
+          : 'Modo Leitura NFC Ativo... Aproxime do celular transmissor ou Tag NFC';
+    });
 
     try {
       await NfcManager.instance.startSession(
         pollingOptions: {NfcPollingOption.iso14443, NfcPollingOption.iso15693},
-        alertMessageIos: 'Aproxime outro aparelho para abrir a lista compartilhada no Google Sheets!',
+        alertMessageIos: isTransmitMode
+            ? 'Aproxime da traseira do outro celular para transmitir a lista de compras!'
+            : 'Aproxime do outro celular para receber a lista de compras!',
         onDiscovered: (NfcTag tag) async {
           HapticFeedback.heavyImpact();
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Row(
-                  children: [
-                    Icon(Icons.nfc_rounded, color: Colors.greenAccent),
-                    SizedBox(width: 8),
-                    Text('Aparelho detectado via NFC!'),
-                  ],
-                ),
-                backgroundColor: Color(0xFF1B5E20),
-              ),
+
+          final provider = Provider.of<ItemProvider>(context, listen: false);
+
+          if (isTransmitMode) {
+            final uriToTransmit = _spreadsheetUrl ?? _carrinPayloadUri;
+            final record = NdefRecord(
+              typeNameFormat: TypeNameFormat.wellKnown,
+              type: Uint8List.fromList([0x55]), // 'U'
+              identifier: Uint8List(0),
+              payload: Uint8List.fromList([0, ...utf8.encode(uriToTransmit)]),
             );
+            final message = NdefMessage(records: [record]);
+
+            try {
+              if (defaultTargetPlatform == TargetPlatform.android) {
+                final ndefAndroid = android_nfc.NdefAndroid.from(tag);
+                if (ndefAndroid != null && ndefAndroid.isWritable) {
+                  await ndefAndroid.writeNdefMessage(message);
+                }
+              } else if (defaultTargetPlatform == TargetPlatform.iOS) {
+                final ndefIos = ios_nfc.NdefIos.from(tag);
+                if (ndefIos != null) {
+                  await ndefIos.writeNdef(message);
+                }
+              }
+            } catch (_) {}
+
+            if (mounted) {
+              setState(() {
+                _nfcStatusText = 'Dispositivo ou Tag NFC detectado com sucesso!';
+              });
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Row(
+                    children: [
+                      Icon(Icons.nfc_rounded, color: Colors.greenAccent),
+                      SizedBox(width: 8),
+                      Text('Lista transmitida via NFC com sucesso!'),
+                    ],
+                  ),
+                  backgroundColor: Color(0xFF1B5E20),
+                ),
+              );
+            }
+          } else {
+            // Modo Leitura: lê o payload da tag / dispositivo
+            String? extracted;
+            try {
+              if (defaultTargetPlatform == TargetPlatform.android) {
+                final ndef = android_nfc.NdefAndroid.from(tag);
+                if (ndef != null) {
+                  final msg = ndef.cachedNdefMessage ?? await ndef.getNdefMessage();
+                  if (msg != null) {
+                    extracted = _extractTextFromNdefMessage(msg);
+                  }
+                }
+              } else if (defaultTargetPlatform == TargetPlatform.iOS) {
+                final ndefIos = ios_nfc.NdefIos.from(tag);
+                if (ndefIos != null && ndefIos.cachedNdefMessage != null) {
+                  extracted = _extractTextFromNdefMessage(ndefIos.cachedNdefMessage!);
+                }
+              }
+            } catch (_) {}
+
+            if (extracted != null && extracted.isNotEmpty) {
+              final payload = SharedListService.instance.decodeList(extracted);
+              if (payload != null && mounted) {
+                Navigator.pop(context);
+                _showImportConfirmationDialog(context, payload, provider);
+                return;
+              }
+            }
+
+            if (mounted) {
+              setState(() {
+                _nfcStatusText = 'Sinal NFC detectado!';
+              });
+            }
           }
         },
       );
-    } catch (_) {}
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isNfcActive = false;
+          _nfcStatusText = 'Sessão NFC finalizada ou cancelada';
+        });
+      }
+    }
+  }
+
+  void _showImportConfirmationDialog(
+    BuildContext context,
+    SharedListPayload payload,
+    ItemProvider provider,
+  ) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        title: const Row(
+          children: [
+            Icon(Icons.download_for_offline_rounded, color: Colors.green),
+            SizedBox(width: 10),
+            Text('Lista Recebida!', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Lista: "${payload.title}"', style: const TextStyle(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 6),
+            Text('Contém ${payload.items.length} itens cadastrados.'),
+            const SizedBox(height: 12),
+            const Text('Deseja carregar estes produtos na sua lista agora?'),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancelar', style: TextStyle(color: Colors.grey)),
+          ),
+          OutlinedButton(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              await provider.importSharedItems(
+                payload.items,
+                replaceExisting: false,
+                listTitle: payload.title,
+                newBudget: payload.budget,
+              );
+              if (payload.spreadsheetId != null && payload.spreadsheetId!.isNotEmpty) {
+                await provider.connectToSharedSpreadsheet(payload.spreadsheetId!);
+              }
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Itens da lista "${payload.title}" mesclados!'), backgroundColor: Colors.green),
+                );
+              }
+            },
+            child: const Text('Mesclar'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white),
+            onPressed: () async {
+              Navigator.pop(ctx);
+              await provider.importSharedItems(
+                payload.items,
+                replaceExisting: true,
+                listTitle: payload.title,
+                newBudget: payload.budget,
+              );
+              if (payload.spreadsheetId != null && payload.spreadsheetId!.isNotEmpty) {
+                await provider.connectToSharedSpreadsheet(payload.spreadsheetId!);
+              }
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Lista "${payload.title}" carregada com sucesso!'), backgroundColor: Colors.green),
+                );
+              }
+            },
+            child: const Text('Substituir'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _connectToSpreadsheet(String rawInput) async {
     final clean = rawInput.trim();
     if (clean.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Cole o link do Google Sheets ou ID da planilha.')),
+        const SnackBar(content: Text('Cole o link da lista ou ID.')),
       );
       return;
     }
 
-    setState(() => _isConnecting = true);
     final provider = Provider.of<ItemProvider>(context, listen: false);
 
+    // 1. Tenta decodificar como payload direto do CARRIN
+    final payload = SharedListService.instance.decodeList(clean);
+    if (payload != null) {
+      _showImportConfirmationDialog(context, payload, provider);
+      return;
+    }
+
+    // 2. Se for link do Google Sheets
+    setState(() => _isConnecting = true);
     try {
       final parsedId = UserSheetsService.extractSpreadsheetId(clean);
       await provider.connectToSharedSpreadsheet(parsedId);
@@ -253,19 +479,25 @@ class _SharedListPairingSheetState extends State<SharedListPairingSheet> {
   }
 
   void _openQrScanner() {
+    final provider = Provider.of<ItemProvider>(context, listen: false);
     Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) => Scaffold(
-          appBar: AppBar(title: const Text('Escanear QR da Planilha')),
+          appBar: AppBar(title: const Text('Escanear QR da Lista Compartilhada')),
           body: MobileScanner(
             onDetect: (capture) {
               for (final barcode in capture.barcodes) {
                 final code = barcode.rawValue?.trim() ?? barcode.displayValue?.trim();
                 if (code != null && code.isNotEmpty) {
                   Navigator.pop(context);
-                  _enterLinkController.text = code;
-                  _connectToSpreadsheet(code);
+                  final payload = SharedListService.instance.decodeList(code);
+                  if (payload != null) {
+                    _showImportConfirmationDialog(context, payload, provider);
+                  } else {
+                    _enterLinkController.text = code;
+                    _connectToSpreadsheet(code);
+                  }
                   break;
                 }
               }
@@ -278,6 +510,7 @@ class _SharedListPairingSheetState extends State<SharedListPairingSheet> {
 
   @override
   void dispose() {
+    _tabController.dispose();
     _enterLinkController.dispose();
     _emailController.dispose();
     try {
@@ -289,9 +522,13 @@ class _SharedListPairingSheetState extends State<SharedListPairingSheet> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final primary = theme.primaryColor;
     final cardColor = theme.cardColor;
 
-    final displayUrl = _spreadsheetUrl ?? (_spreadsheetId != null ? 'https://docs.google.com/spreadsheets/d/$_spreadsheetId/edit' : null);
+    final String qrData = _qrForCarrinApp
+        ? _carrinPayloadUri
+        : (_spreadsheetUrl ?? (_spreadsheetId != null ? 'https://docs.google.com/spreadsheets/d/$_spreadsheetId/edit' : _carrinPayloadUri));
 
     return Container(
       decoration: BoxDecoration(
@@ -311,293 +548,379 @@ class _SharedListPairingSheetState extends State<SharedListPairingSheet> {
         right: 18,
         bottom: MediaQuery.of(context).viewInsets.bottom + 24,
       ),
-      child: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // Puxador central
-            Container(
-              width: 44,
-              height: 4.5,
-              decoration: BoxDecoration(
-                color: Colors.grey.withValues(alpha: 0.4),
-                borderRadius: BorderRadius.circular(3),
-              ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Puxador central
+          Container(
+            width: 44,
+            height: 4.5,
+            decoration: BoxDecoration(
+              color: Colors.grey.withValues(alpha: 0.4),
+              borderRadius: BorderRadius.circular(3),
             ),
-            const SizedBox(height: 14),
+          ),
+          const SizedBox(height: 14),
 
-            // Cabeçalho
-            Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: Colors.green.withValues(alpha: 0.15),
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(Icons.qr_code_2_rounded, color: Colors.green, size: 24),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Lista Compartilhada (Google Sheets)',
-                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                      ),
-                      Text(
-                        'Editável por todos via QR Code e Link',
-                        style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurface.withValues(alpha: 0.7)),
-                      ),
-                    ],
-                  ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.close_rounded),
-                  onPressed: () => Navigator.pop(context),
-                ),
-              ],
-            ),
-
-            // Banner se já estiver em planilha compartilhada
-            if (_isUsingCustomSheet) ...[
-              const SizedBox(height: 10),
+          // Cabeçalho
+          Row(
+            children: [
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
-                  color: Colors.amber.withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.amber.withValues(alpha: 0.4)),
+                  color: Colors.blue.withValues(alpha: 0.15),
+                  shape: BoxShape.circle,
                 ),
-                child: Row(
+                child: const Icon(Icons.share_location_rounded, color: Colors.blue, size: 24),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Icon(Icons.link_rounded, color: Colors.orange, size: 20),
-                    const SizedBox(width: 8),
-                    const Expanded(
-                      child: Text(
-                        'Conectado à Planilha Compartilhada',
-                        style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
-                      ),
+                    const Text(
+                      'Lista Compartilhada (NFC / QR)',
+                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
                     ),
-                    TextButton(
-                      onPressed: _isConnecting ? null : _disconnectAndRestore,
-                      child: const Text('Voltar à Minha', style: TextStyle(fontSize: 12, color: Colors.deepOrange)),
+                    Text(
+                      'Sincronize com outro aparelho em tempo real',
+                      style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurface.withValues(alpha: 0.7)),
                     ),
                   ],
                 ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.close_rounded),
+                onPressed: () => Navigator.pop(context),
               ),
             ],
+          ),
 
-            const SizedBox(height: 14),
-
-            // Card Principal: QR Code com Edição Liberada Automática
-            _isLoadingSheetInfo
-                ? const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 40),
-                    child: Center(child: CircularProgressIndicator()),
-                  )
-                : displayUrl == null
-                    ? const Padding(
-                        padding: EdgeInsets.symmetric(vertical: 30),
-                        child: Text('Nenhuma planilha configurada no momento.'),
-                      )
-                    : Column(
-                        children: [
-                          // Badge de Acesso Liberado
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-                            decoration: BoxDecoration(
-                              color: Colors.green.withValues(alpha: 0.15),
-                              borderRadius: BorderRadius.circular(20),
-                              border: Border.all(color: Colors.green.withValues(alpha: 0.3)),
-                            ),
-                            child: const Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(Icons.check_circle_rounded, color: Colors.green, size: 16),
-                                SizedBox(width: 6),
-                                Text(
-                                  'Acesso de Edição Liberado para Todos',
-                                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.green),
-                                ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(height: 14),
-
-                          // QR Code Gigante
-                          Container(
-                            padding: const EdgeInsets.all(12),
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(20),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withValues(alpha: 0.12),
-                                  blurRadius: 10,
-                                  offset: const Offset(0, 4),
-                                ),
-                              ],
-                            ),
-                            child: QrImageView(
-                              data: displayUrl,
-                              version: QrVersions.auto,
-                              size: 190.0,
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-
-                          // Instrução para iPhone / Android
-                          const Padding(
-                            padding: EdgeInsets.symmetric(horizontal: 16),
-                            child: Text(
-                              'Aponte a câmera do celular (iPhone ou Android) para abrir e editar a lista em tempo real no Google Planilhas ou CARRIN Web.',
-                              textAlign: TextAlign.center,
-                              style: TextStyle(fontSize: 12.5, color: Colors.grey, height: 1.3),
-                            ),
-                          ),
-                          const SizedBox(height: 16),
-
-                          // Botões de Ação Rápida
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              FilledButton.icon(
-                                style: FilledButton.styleFrom(
-                                  backgroundColor: Colors.green[700],
-                                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                                ),
-                                onPressed: () {
-                                  Clipboard.setData(ClipboardData(text: displayUrl));
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(
-                                      content: Text('Link do Google Sheets copiado com sucesso!'),
-                                      backgroundColor: Colors.green,
-                                    ),
-                                  );
-                                },
-                                icon: const Icon(Icons.copy_rounded, size: 18),
-                                label: const Text('Copiar Link', style: TextStyle(fontWeight: FontWeight.bold)),
-                              ),
-                              const SizedBox(width: 10),
-                              OutlinedButton.icon(
-                                style: OutlinedButton.styleFrom(
-                                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                                ),
-                                onPressed: () async {
-                                  final uri = Uri.parse(displayUrl);
-                                  if (await canLaunchUrl(uri)) {
-                                    await launchUrl(uri, mode: LaunchMode.externalApplication);
-                                  }
-                                },
-                                icon: const Icon(Icons.open_in_browser_rounded, size: 18),
-                                label: const Text('Abrir Planilha'),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-
-            const SizedBox(height: 16),
-            const Divider(),
-
-            // Seção: Conectar à Planilha de Outra Pessoa
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text(
-                  'Entrar na Planilha de Outra Pessoa:',
-                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-                ),
-                TextButton.icon(
-                  onPressed: _openQrScanner,
-                  icon: const Icon(Icons.qr_code_scanner_rounded, size: 16),
-                  label: const Text('Ler QR Code', style: TextStyle(fontSize: 12)),
-                ),
-              ],
-            ),
-            const SizedBox(height: 6),
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _enterLinkController,
-                    decoration: InputDecoration(
-                      hintText: 'Cole o link do Google Sheets ou ID',
-                      hintStyle: const TextStyle(fontSize: 12),
-                      isDense: true,
-                      prefixIcon: const Icon(Icons.link_rounded, size: 18),
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+          // Banner de Status se já estiver em planilha compartilhada
+          if (_isUsingCustomSheet) ...[
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: Colors.amber.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.amber.withValues(alpha: 0.4)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.link_rounded, color: Colors.orange, size: 20),
+                  const SizedBox(width: 8),
+                  const Expanded(
+                    child: Text(
+                      'Conectado à Planilha Compartilhada',
+                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
                     ),
                   ),
-                ),
-                const SizedBox(width: 8),
-                FilledButton(
-                  onPressed: _isConnecting
-                      ? null
-                      : () => _connectToSpreadsheet(_enterLinkController.text),
-                  child: _isConnecting
-                      ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                      : const Text('Conectar'),
-                ),
-              ],
-            ),
-
-            const SizedBox(height: 12),
-
-            // Opção alternativa: Enviar convite por E-mail Google (oculto por padrão para manter a tela limpa)
-            Theme(
-              data: theme.copyWith(dividerColor: Colors.transparent),
-              child: ExpansionTile(
-                tilePadding: EdgeInsets.zero,
-                dense: true,
-                title: const Row(
-                  children: [
-                    Icon(Icons.mail_outline_rounded, size: 16, color: Colors.blue),
-                    SizedBox(width: 8),
-                    Text(
-                      'Também quer enviar convite oficial por E-mail Google?',
-                      style: TextStyle(fontSize: 12, color: Colors.blue, fontWeight: FontWeight.w600),
-                    ),
-                  ],
-                ),
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: TextField(
-                            controller: _emailController,
-                            keyboardType: TextInputType.emailAddress,
-                            decoration: InputDecoration(
-                              hintText: 'exemplo@gmail.com',
-                              hintStyle: const TextStyle(fontSize: 12),
-                              isDense: true,
-                              prefixIcon: const Icon(Icons.alternate_email_rounded, size: 16),
-                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        FilledButton(
-                          style: FilledButton.styleFrom(backgroundColor: Colors.blue[700]),
-                          onPressed: _isSharingEmail ? null : _shareWithGoogleEmail,
-                          child: _isSharingEmail
-                              ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                              : const Text('Enviar'),
-                        ),
-                      ],
-                    ),
+                  TextButton(
+                    onPressed: _isConnecting ? null : _disconnectAndRestore,
+                    child: const Text('Voltar à Minha', style: TextStyle(fontSize: 12, color: Colors.deepOrange)),
                   ),
                 ],
               ),
             ),
           ],
-        ),
+
+          const SizedBox(height: 12),
+
+          // 3 Abas em Destaque: NFC, QR Code e Google Sheets
+          Container(
+            decoration: BoxDecoration(
+              color: isDark ? Colors.grey[900] : Colors.grey[200],
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: TabBar(
+              controller: _tabController,
+              indicator: BoxDecoration(
+                color: primary,
+                borderRadius: BorderRadius.circular(16),
+              ),
+              indicatorSize: TabBarIndicatorSize.tab,
+              labelColor: Colors.white,
+              unselectedLabelColor: isDark ? Colors.grey[400] : Colors.grey[700],
+              dividerColor: Colors.transparent,
+              labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+              tabs: const [
+                Tab(icon: Icon(Icons.nfc_rounded, size: 20), text: 'NFC'),
+                Tab(icon: Icon(Icons.qr_code_2_rounded, size: 20), text: 'QR Code'),
+                Tab(icon: Icon(Icons.table_chart_rounded, size: 20), text: 'Google Sheets'),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+
+          // Conteúdo das Abas
+          SizedBox(
+            height: 310,
+            child: TabBarView(
+              controller: _tabController,
+              children: [
+                // 1. ABA NFC (Aproximação Ativa)
+                _buildNfcTab(primary),
+
+                // 2. ABA QR CODE (Universal & iPhone)
+                _buildQrTab(qrData),
+
+                // 3. ABA GOOGLE SHEETS & E-MAIL
+                _buildGoogleSheetsTab(theme),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 10),
+          const Divider(),
+
+          // Rodapé: Entrar na Lista de Outra Pessoa
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                'Entrar na Lista de Outra Pessoa:',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12.5),
+              ),
+              TextButton.icon(
+                onPressed: _openQrScanner,
+                icon: const Icon(Icons.qr_code_scanner_rounded, size: 16),
+                label: const Text('Ler QR Code', style: TextStyle(fontSize: 12)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _enterLinkController,
+                  decoration: InputDecoration(
+                    hintText: 'Cole o link compartilhado ou ID',
+                    hintStyle: const TextStyle(fontSize: 12),
+                    isDense: true,
+                    prefixIcon: const Icon(Icons.link_rounded, size: 18),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              FilledButton(
+                onPressed: _isConnecting
+                    ? null
+                    : () => _connectToSpreadsheet(_enterLinkController.text),
+                child: _isConnecting
+                    ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                    : const Text('Carregar'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  // 1. ABA NFC
+  Widget _buildNfcTab(Color primary) {
+    return SingleChildScrollView(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const SizedBox(height: 6),
+          Stack(
+            alignment: Alignment.center,
+            children: [
+              Container(
+                width: 120,
+                height: 120,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: primary.withValues(alpha: 0.1),
+                ),
+              ),
+              Container(
+                width: 90,
+                height: 90,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: primary.withValues(alpha: 0.2),
+                ),
+              ),
+              Icon(
+                Icons.nfc_rounded,
+                size: 54,
+                color: _isNfcActive ? Colors.green : (_isNfcAvailable ? primary : Colors.grey),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Text(
+            _isNfcAvailable
+                ? (_isNfcActive ? 'NFC Ativo e Transmitindo!' : 'NFC Pronto para Aproximação')
+                : 'NFC Desativado no Aparelho',
+            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+          ),
+          const SizedBox(height: 6),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Text(
+              _nfcStatusText,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+          ),
+          const SizedBox(height: 16),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              FilledButton.icon(
+                style: FilledButton.styleFrom(
+                  backgroundColor: Colors.blue[700],
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                ),
+                onPressed: _isNfcAvailable ? () => _startNfcSession(isTransmitMode: true) : null,
+                icon: const Icon(Icons.tap_and_play_rounded, size: 18),
+                label: const Text('Transmitir por NFC'),
+              ),
+              const SizedBox(width: 8),
+              OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                ),
+                onPressed: _isNfcAvailable ? () => _startNfcSession(isTransmitMode: false) : null,
+                icon: const Icon(Icons.sensors_rounded, size: 18),
+                label: const Text('Receber por NFC'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  // 2. ABA QR CODE
+  Widget _buildQrTab(String qrData) {
+    return SingleChildScrollView(
+      child: Column(
+        children: [
+          // Seletor de Destino do QR Code
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              ChoiceChip(
+                label: const Text('📱 No App CARRIN', style: TextStyle(fontSize: 11)),
+                selected: _qrForCarrinApp,
+                onSelected: (val) => setState(() => _qrForCarrinApp = true),
+              ),
+              const SizedBox(width: 8),
+              ChoiceChip(
+                label: const Text('🍎 iPhone / Web (Google)', style: TextStyle(fontSize: 11)),
+                selected: !_qrForCarrinApp,
+                onSelected: (val) => setState(() => _qrForCarrinApp = false),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+
+          // Imagem do QR Code
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: [
+                BoxShadow(color: Colors.black.withValues(alpha: 0.1), blurRadius: 6),
+              ],
+            ),
+            child: QrImageView(
+              data: qrData,
+              version: QrVersions.auto,
+              size: 145.0,
+            ),
+          ),
+          const SizedBox(height: 10),
+
+          Text(
+            _qrForCarrinApp
+                ? 'Aponte a câmera do outro celular com CARRIN para carregar a lista na hora'
+                : 'Aponte a câmera do iPhone para abrir no Google Planilhas / Safari',
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontSize: 11.5, color: Colors.grey),
+          ),
+          const SizedBox(height: 10),
+
+          FilledButton.icon(
+            style: FilledButton.styleFrom(
+              backgroundColor: Colors.green[700],
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            ),
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: qrData));
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Link copiado para a área de transferência!'), backgroundColor: Colors.green),
+              );
+            },
+            icon: const Icon(Icons.copy_rounded, size: 16),
+            label: const Text('Copiar Link', style: TextStyle(fontSize: 12)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // 3. ABA GOOGLE SHEETS
+  Widget _buildGoogleSheetsTab(ThemeData theme) {
+    final displayUrl = _spreadsheetUrl ?? (_spreadsheetId != null ? 'https://docs.google.com/spreadsheets/d/$_spreadsheetId/edit' : null);
+
+    return SingleChildScrollView(
+      child: Column(
+        children: [
+          const SizedBox(height: 8),
+          const Text(
+            'Conecte por E-mail Google ou abra a planilha oficial na nuvem:',
+            style: TextStyle(fontSize: 12, color: Colors.grey),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _emailController,
+                  keyboardType: TextInputType.emailAddress,
+                  decoration: InputDecoration(
+                    labelText: 'Gmail da outra pessoa',
+                    hintText: 'exemplo@gmail.com',
+                    isDense: true,
+                    prefixIcon: const Icon(Icons.alternate_email_rounded, size: 18),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              FilledButton(
+                style: FilledButton.styleFrom(backgroundColor: Colors.green[700]),
+                onPressed: _isSharingEmail ? null : _shareWithGoogleEmail,
+                child: _isSharingEmail
+                    ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                    : const Text('Convidar'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          if (displayUrl != null) ...[
+            OutlinedButton.icon(
+              onPressed: () async {
+                final uri = Uri.parse(displayUrl);
+                if (await canLaunchUrl(uri)) {
+                  await launchUrl(uri, mode: LaunchMode.externalApplication);
+                }
+              },
+              icon: const Icon(Icons.open_in_browser_rounded, size: 18),
+              label: const Text('Abrir Planilha no Navegador'),
+            ),
+          ],
+        ],
       ),
     );
   }

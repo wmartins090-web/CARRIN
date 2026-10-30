@@ -1,3 +1,4 @@
+import '../services/shared_list_service.dart';
 import 'market_map_screen.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
@@ -911,7 +912,14 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> with SingleTick
                     final trimmed = result.trim();
                     if (trimmed.isEmpty) return;
 
-                    // Padrão A: Convite de Lista Compartilhada
+                    // Padrão A: Lista Compartilhada Recebida (carrin://share ou payload)
+                    final sharedPayload = SharedListService.instance.decodeList(trimmed);
+                    if (sharedPayload != null) {
+                      if (!context.mounted) return;
+                      _showImportSharedListDialog(context, sharedPayload, itemProvider);
+                      return;
+                    }
+
                     if (trimmed.startsWith('carrin://pair') || trimmed.contains('carrin.app/pair')) {
                       if (!context.mounted) return;
                       SharedListPairingSheet.show(
@@ -2232,6 +2240,82 @@ if (_isMarketLocked)
               Navigator.pop(context);
             },
             child: const Text('Salvar', style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showImportSharedListDialog(BuildContext context, SharedListPayload payload, ItemProvider itemProvider) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        title: const Row(
+          children: [
+            Icon(Icons.download_for_offline_rounded, color: Colors.green),
+            SizedBox(width: 10),
+            Text('Lista Compartilhada', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Lista recebida: "${payload.title}"', style: const TextStyle(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 6),
+            Text('Contém ${payload.items.length} itens cadastrados.'),
+            if (payload.budget > 0)
+              Text('Orçamento: ${Utils.formatCurrency(payload.budget)}'),
+            const SizedBox(height: 12),
+            const Text('Como deseja importar os produtos para o seu carrinho?'),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancelar', style: TextStyle(color: Colors.grey)),
+          ),
+          OutlinedButton(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              await itemProvider.importSharedItems(
+                payload.items,
+                replaceExisting: false,
+                listTitle: payload.title,
+                newBudget: payload.budget,
+              );
+              if (payload.spreadsheetId != null && payload.spreadsheetId!.isNotEmpty) {
+                await itemProvider.connectToSharedSpreadsheet(payload.spreadsheetId!);
+              }
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Itens da lista "${payload.title}" mesclados com sucesso!'), backgroundColor: Colors.green),
+                );
+              }
+            },
+            child: const Text('Mesclar'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white),
+            onPressed: () async {
+              Navigator.pop(ctx);
+              await itemProvider.importSharedItems(
+                payload.items,
+                replaceExisting: true,
+                listTitle: payload.title,
+                newBudget: payload.budget,
+              );
+              if (payload.spreadsheetId != null && payload.spreadsheetId!.isNotEmpty) {
+                await itemProvider.connectToSharedSpreadsheet(payload.spreadsheetId!);
+              }
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Lista "${payload.title}" carregada com sucesso!'), backgroundColor: Colors.green),
+                );
+              }
+            },
+            child: const Text('Substituir'),
           ),
         ],
       ),

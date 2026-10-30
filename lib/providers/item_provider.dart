@@ -1293,6 +1293,38 @@ class ItemProvider with ChangeNotifier {
     }
   }
 
+  Future<void> importSharedItems(
+    List<Item> sharedItems, {
+    bool replaceExisting = false,
+    String? listTitle,
+    double? newBudget,
+  }) async {
+    if (listTitle != null && listTitle.trim().isNotEmpty && listTitle != currentMonth) {
+      if (!_months.contains(listTitle)) {
+        await createNewMonth(listTitle, false);
+      }
+      await switchMonth(listTitle);
+    }
+
+    if (replaceExisting) {
+      for (var it in List.from(_items)) {
+        await removeItem(it.index);
+      }
+    }
+
+    if (newBudget != null && newBudget > 0) {
+      await updateBudget(newBudget);
+    }
+
+    for (var it in sharedItems) {
+      if (!replaceExisting && _items.any((existing) => Utils.normalize(existing.name) == Utils.normalize(it.name))) {
+        continue;
+      }
+      await addItem(it);
+    }
+    _safeNotify();
+  }
+
   double get totalCost => _items.where((it) => it.isBought).fold(0.0, (sum, item) => sum + item.totalPrice);
   
   double get budget {

@@ -75,8 +75,8 @@ class AppUpdateService {
   AppUpdateService._();
   static final AppUpdateService instance = AppUpdateService._();
 
-  static String currentAppVersion = '1.3.601';
-  static int currentBuildNumber = 601;
+  static String currentAppVersion = '1.3.602';
+  static int currentBuildNumber = 602;
 
   /// Inicializa dinamicamente as informações reais do pacote instalado no Android
   static Future<void> initPackageInfo() async {
