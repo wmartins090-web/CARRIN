@@ -47,7 +47,7 @@ public class CredManager {
 
 $token = [CredManager]::GetPassword("git:https://github.com")
 if (-not $token) {
-    $token = [CredManager]::GetPassword("GitHub - https://api.github.com/hollopocran")
+    $token = [CredManager]::GetPassword("GitHub - https://api.github.com/wmartins090-web")
 }
 
 if (-not $token) {
@@ -61,7 +61,7 @@ $headers = @{
     "User-Agent" = "CARRIN-Releaser"
 }
 
-$repo = "hollopocran/CARRIN"
+$repo = "wmartins090-web/CARRIN"
 
 if (-not (Test-Path $apkPath)) {
     Write-Error "APK nao encontrado em $apkPath"

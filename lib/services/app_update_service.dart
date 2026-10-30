@@ -90,9 +90,9 @@ class AppUpdateService {
   static const MethodChannel _installerChannel = MethodChannel('com.wmartins.carrin/installer');
 
   static const String primaryVersionUrl =
-      'https://raw.githubusercontent.com/hollopocran/CARRIN/main/version.json';
+      'https://raw.githubusercontent.com/wmartins090-web/CARRIN/main/version.json';
   static const String fallbackVersionUrl =
-      'https://cdn.jsdelivr.net/gh/hollopocran/CARRIN@main/version.json';
+      'https://cdn.jsdelivr.net/gh/wmartins090-web/CARRIN@main/version.json';
 
   static const String _prefCustomVersionUrlKey = 'custom_app_version_url';
   static const String _prefDismissedBuildKey = 'dismissed_update_build';

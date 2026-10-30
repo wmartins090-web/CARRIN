@@ -120,7 +120,7 @@ class BarcodeLookupService {
       final response = await http.get(
         endpoint,
         headers: {
-          'User-Agent': 'CarrinApp/1.3 (Android; pt-BR; https://github.com/hollopocran/CARRIN)',
+          'User-Agent': 'CarrinApp/1.3 (Android; pt-BR; https://github.com/wmartins090-web/CARRIN)',
         },
       ).timeout(const Duration(milliseconds: 3200));
 
