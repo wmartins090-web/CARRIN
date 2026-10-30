@@ -5,7 +5,6 @@ import 'package:provider/provider.dart';
 import 'dashboard_screen.dart';
 import 'month_selection_screen.dart';
 import 'statistics_screen.dart';
-import 'community_radar_screen.dart';
 import 'settings_screen.dart';
 import '../providers/item_provider.dart';
 import '../widgets/interactive_tab_tutorial.dart';
@@ -34,16 +33,14 @@ class MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       case 2:
         return TutorialSection.statistics;
       case 3:
-        return TutorialSection.community;
-      case 4:
       default:
         return TutorialSection.settings;
     }
   }
 
   void _scheduleTabTutorial(int index, {Duration delay = const Duration(milliseconds: 240)}) {
-    // Mantém o tutorial automático apenas no Início (0) e nas Configurações (4)
-    if (index != 0 && index != 4) return;
+    // Mantém o tutorial automático apenas no Início (0) e nas Configurações (3)
+    if (index != 0 && index != 3) return;
     _tutorialSettleTimer?.cancel();
     _tutorialSettleTimer = Timer(delay, () {
       if (!mounted || _currentIndex != index) return;
@@ -173,7 +170,6 @@ class MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
               DashboardScreen(),
               MonthSelectionScreen(),
               StatisticsScreen(),
-              CommunityRadarScreen(),
               SettingsScreen(),
             ],
           ),
@@ -220,11 +216,6 @@ class MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                     icon: Icon(Icons.bar_chart_outlined),
                     activeIcon: Icon(Icons.bar_chart),
                     label: 'Análises',
-                  ),
-                  BottomNavigationBarItem(
-                    icon: Icon(Icons.radar_outlined),
-                    activeIcon: Icon(Icons.radar_rounded),
-                    label: 'Comunidade',
                   ),
                   BottomNavigationBarItem(
                     icon: Icon(Icons.settings_outlined),

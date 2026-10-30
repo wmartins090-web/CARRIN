@@ -1,3 +1,4 @@
+import 'market_map_screen.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -24,7 +25,6 @@ import '../widgets/market_and_purpose_widgets.dart';
 
 import 'barcode_scanner_screen.dart';
 import 'receipt_scanner_screen.dart';
-import 'community_radar_screen.dart';
 import '../services/barcode_lookup_service.dart';
 
 /// The main shopping list view for a specific month.
@@ -461,7 +461,7 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> with SingleTick
                                     onTap: () {
                                       Navigator.push(
                                         context,
-                                        MaterialPageRoute(builder: (_) => const CommunityRadarScreen()),
+                                        MaterialPageRoute(builder: (_) => const MarketMapScreen()),
                                       );
                                     },
                                     borderRadius: BorderRadius.circular(8),

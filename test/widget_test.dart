@@ -22,7 +22,6 @@ import 'package:lista_compras/services/google_places_service.dart';
 import 'package:lista_compras/models/community_price.dart';
 import 'package:lista_compras/services/community_price_service.dart';
 import 'package:lista_compras/screens/market_map_screen.dart';
-import 'package:lista_compras/screens/community_radar_screen.dart';
 import 'package:lista_compras/screens/settings_screen.dart';
 import 'package:lista_compras/screens/statistics_screen.dart';
 import 'package:lista_compras/services/default_supermarkets.dart';
@@ -1323,29 +1322,22 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      // Switch to Community tab (index 3)
-      await tester.tap(find.byIcon(Icons.radar_outlined));
+      // Switch to Statistics tab (index 2)
+      await tester.tap(find.byIcon(Icons.bar_chart_outlined));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 400));
 
-      expect(find.byType(CommunityRadarScreen), findsOneWidget);
+      expect(find.byType(StatisticsScreen), findsOneWidget);
 
-      // Drag left on CommunityRadarScreen to transition smoothly to Settings tab (index 4)
-      await tester.drag(find.byType(CommunityRadarScreen), const Offset(-500, 0), warnIfMissed: false);
+      // Drag left on StatisticsScreen to transition smoothly to Settings tab (index 3)
+      await tester.drag(find.byType(StatisticsScreen), const Offset(-500, 0), warnIfMissed: false);
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 400));
 
       expect(find.byType(SettingsScreen), findsOneWidget);
 
-      // Drag right on SettingsScreen back to CommunityRadarScreen (index 3)
+      // Drag right on SettingsScreen back to StatisticsScreen (index 2)
       await tester.drag(find.byType(SettingsScreen), const Offset(500, 0), warnIfMissed: false);
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 400));
-
-      expect(find.byType(CommunityRadarScreen), findsOneWidget);
-
-      // Drag right on CommunityRadarScreen smoothly to StatisticsScreen (index 2)
-      await tester.drag(find.byType(CommunityRadarScreen), const Offset(500, 0), warnIfMissed: false);
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 400));
 
