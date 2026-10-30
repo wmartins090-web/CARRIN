@@ -9,6 +9,7 @@ import '../services/community_price_service.dart';
 import '../services/default_supermarkets.dart';
 import '../services/location_service.dart';
 import '../services/utils.dart';
+import '../widgets/under_construction_cart_animation.dart';
 import 'market_map_screen.dart';
 
 class CommunityRadarScreen extends StatefulWidget {
@@ -409,22 +410,16 @@ class _CommunityRadarScreenState extends State<CommunityRadarScreen>
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
-          : TabBarView(
-              controller: _tabController,
-              physics: const NeverScrollableScrollPhysics(),
-              children: [
-                _buildFeedTab(isDark, cardColor, primaryColor, itemProvider),
-
-                _buildMarketsTab(isDark, cardColor, primaryColor),
-              ],
+          : UnderConstructionCartAnimation(
+              childUnderneath: TabBarView(
+                controller: _tabController,
+                physics: const NeverScrollableScrollPhysics(),
+                children: [
+                  _buildFeedTab(isDark, cardColor, primaryColor, itemProvider),
+                  _buildMarketsTab(isDark, cardColor, primaryColor),
+                ],
+              ),
             ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _showAddPriceDialog(context, itemProvider),
-        backgroundColor: primaryColor,
-        foregroundColor: Theme.of(context).colorScheme.onPrimary,
-        icon: const Icon(Icons.post_add_rounded),
-        label: const Text('Postar Preço', style: TextStyle(fontWeight: FontWeight.bold)),
-      ),
     );
   }
 

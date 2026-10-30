@@ -1,16 +1,15 @@
 {
-  "version": "1.3.595",
-  "build_number": 595,
+  "version": "1.3.596",
+  "build_number": 596,
   "release_date": "2026-10-30",
-  "title": "CARRIN v1.3.595",
+  "title": "CARRIN v1.3.596",
   "release_notes": [
-    "Pins de Supermercado Estilo Mapew: Novo formato de pin de varejo com fachada, ponteiro inferior e cores oficiais da rede",
-    "Mercados de Volta ao Mapa: Exibição inteligente dos 15 supermercados mais próximos sem poluição ou travamentos",
-    "Deduplicação Espacial: Eliminação de duplicidades em menos de 35 metros",
-    "Pílulas de Preço e Oferta Ativa: Destaque visual para o melhor preço e halo de foco"
+    "Aba Comunidades em Construção: Marca d'água estilosa diagonal em toda a tela",
+    "Animação Interativa do Carrinho: Carrinho em movimento com rodas girando, esteira de solo, linhas de velocidade e itens saltando",
+    "Badge pulsante 'EM CONSTRUÇÃO' com prévia suave em segundo plano"
   ],
-  "apk_url": "https://github.com/wmartins090-web/CARRIN/releases/download/v1.3.595/carrin_v1.3.595.apk",
-  "size_bytes": 120419349,
+  "apk_url": "https://github.com/wmartins090-web/CARRIN/releases/download/v1.3.596/carrin_v1.3.596.apk",
+  "size_bytes": 120517653,
   "is_active": true,
   "force_update": false
 }
