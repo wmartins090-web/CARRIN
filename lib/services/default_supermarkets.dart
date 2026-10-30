@@ -783,7 +783,7 @@ class DefaultSupermarketsData {
       longitude: -43.00452,
       radiusMeters: 250.0,
       city: 'São Gonçalo',
-      address: 'R. Manoel João Gonçalves, 424 - Alcântara',
+      address: 'R. Dr. Alfredo Backer, 605 - Alcântara',
       icon: 'warehouse',
       colorHex: '#F57C00',
     ),

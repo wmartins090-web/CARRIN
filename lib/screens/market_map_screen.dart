@@ -57,6 +57,8 @@ class _MarketMapScreenState extends State<MarketMapScreen> {
     CommunityPriceService.defaultStoreLat,
     CommunityPriceService.defaultStoreLng,
   );
+  late LatLng _mapInitialCenter;
+  double _mapInitialZoom = 14.5;
   bool _hasRealGps = false;
   bool _isFollowingUser = false;
   double? _userHeading;
@@ -90,6 +92,20 @@ class _MarketMapScreenState extends State<MarketMapScreen> {
     if (widget.initialUserLat != null && widget.initialUserLng != null) {
       _userPosition = LatLng(widget.initialUserLat!, widget.initialUserLng!);
       _hasRealGps = true;
+    }
+
+    // Se um mercado de foco foi solicitado (ex: Assaí Alcântara), inicializa o mapa diretamente nele
+    if (widget.initialFocusMarket != null && widget.initialFocusMarket!.trim().isNotEmpty) {
+      final targetPre = DefaultSupermarketsData.findMatch(widget.initialFocusMarket!);
+      if (targetPre != null) {
+        _mapInitialCenter = LatLng(targetPre.latitude, targetPre.longitude);
+        _mapInitialZoom = 15.5;
+        _isFollowingUser = false;
+      } else {
+        _mapInitialCenter = _userPosition;
+      }
+    } else {
+      _mapInitialCenter = _userPosition;
     }
 
     _searchFocusNode.addListener(() {
@@ -169,8 +185,8 @@ class _MarketMapScreenState extends State<MarketMapScreen> {
           _userPosition = newPos;
           _hasRealGps = true;
 
-          // Se o modo seguir estiver ativado, move a câmera para a posição do usuário suavemente
-          if (_isFollowingUser) {
+          // Se o modo seguir estiver ativado (e nenhum mercado específico estava focado inicialmente), move a câmera
+          if (_isFollowingUser && widget.initialFocusMarket == null) {
             _mapController.move(_userPosition, _mapController.camera.zoom);
           }
 
@@ -297,15 +313,17 @@ class _MarketMapScreenState extends State<MarketMapScreen> {
         }
 
         if (match != null) {
+          // Garante que o mercado alvo seja o primeiro da lista filtrada (índice 0)
+          // para que o carrossel inferior inicie exibindo o mercado correto sem flash de outra loja
+          _filteredMarkets.removeWhere((m) => m.supermarketName == match!.supermarketName);
+          _filteredMarkets.insert(0, match);
+
           // Se o mercado estiver além do raio atual, expande o raio para exibi-lo no mapa
           if (match.distanceMeters != null && match.distanceMeters! > _radiusKm * 1000) {
             final neededRadius = ((match.distanceMeters! / 1000).ceil() + 5).toDouble();
             if (neededRadius > _radiusKm) {
               _radiusKm = neededRadius;
             }
-            _applyFilters(fitCameraIfFiltered: false);
-          } else if (!_filteredMarkets.any((m) => m.supermarketName == match!.supermarketName)) {
-            _filteredMarkets.insert(0, match);
           }
           _selectMarket(match, openBottomSheet: false);
         } else if (_filteredMarkets.isNotEmpty) {
@@ -1978,8 +1996,8 @@ class _MarketMapScreenState extends State<MarketMapScreen> {
           FlutterMap(
             mapController: _mapController,
             options: MapOptions(
-              initialCenter: _userPosition,
-              initialZoom: 13.5,
+              initialCenter: _mapInitialCenter,
+              initialZoom: _mapInitialZoom,
               minZoom: 4,
               maxZoom: 19,
               interactionOptions: const InteractionOptions(
