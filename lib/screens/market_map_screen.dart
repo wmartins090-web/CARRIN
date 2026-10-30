@@ -1940,14 +1940,31 @@ class _MarketMapScreenState extends State<MarketMapScreen> with TickerProviderSt
 
   /// Constrói um Pin leve (sem texto quando não selecionado) para máxima fluidez (60fps) no mapa.
   /// Quando selecionado pelo clique do usuário, exibe o balão superior com o nome do mercado.
-  // ignore: unused_element
+  Color _resolveMarketBrandColor(String marketName, Color fallback) {
+    final lower = marketName.toLowerCase();
+    if (lower.contains('assai') || lower.contains('assaí')) return const Color(0xFF0D47A1); // Azul Real Assaí
+    if (lower.contains('guanabara')) return const Color(0xFFD32F2F); // Vermelho Guanabara
+    if (lower.contains('carrefour')) return const Color(0xFF1976D2); // Azul Carrefour
+    if (lower.contains('supermarket')) return const Color(0xFFC62828); // Vermelho Supermarket
+    if (lower.contains('prezunic')) return const Color(0xFFE65100); // Laranja Prezunic
+    if (lower.contains('mundial')) return const Color(0xFFF57C00); // Laranja Mundial
+    if (lower.contains('atacadao') || lower.contains('atacadão')) return const Color(0xFFE65100); // Laranja Atacadão
+    if (lower.contains('pao de acucar') || lower.contains('pão de açúcar')) return const Color(0xFF2E7D32); // Verde Pão de Açúcar
+    if (lower.contains('extra')) return const Color(0xFFD32F2F); // Vermelho Extra
+    if (lower.contains('costazul')) return const Color(0xFF0288D1); // Azul Costazul
+    return fallback;
+  }
+
+  /// Constrói um Pin no autêntico estilo Mapew com cara de supermercado (fachada/carrinho),
+  /// ponteiro direcionado ao solo, cores vibrantes da rede e suporte a pílula de preço/oferta.
   Marker _buildMarketMarker(MarketComparison market, Color primary, Color cardColor, bool isDark) {
     final isCheapest = market.isCheapest;
     final isSelected = _selectedMarket?.supermarketName == market.supermarketName;
     final pre = DefaultSupermarketsData.findMatch(market.supermarketName);
-    final pinColor = isCheapest
+    final baseColor = isCheapest
         ? const Color(0xFFFF8F00)
         : _parseColorHex(pre?.colorHex, primary);
+    final pinColor = _resolveMarketBrandColor(market.supermarketName, baseColor);
 
     // 🏷️ Mapew Feature: Verifica se há preço de produto ou cesta do carrinho para sobrepor no pin
     final mKey = market.supermarketName.toLowerCase();
@@ -1959,134 +1976,148 @@ class _MarketMapScreenState extends State<MarketMapScreen> with TickerProviderSt
     final hasPricePill = productPrice != null || cartEstimate != null;
 
     if (!isSelected) {
-      // Se há um preço ou cesta ativa, desenha a pílula de preço flutuante estilo Mapew
-      if (hasPricePill) {
-        final bool isBestPrice = productPrice != null &&
-            _lowestProductPriceInView != null &&
-            productPrice.price <= (_lowestProductPriceInView! + 0.01);
+      final bool isBestPrice = productPrice != null &&
+          _lowestProductPriceInView != null &&
+          productPrice.price <= (_lowestProductPriceInView! + 0.01);
 
-        final pillColor = isBestPrice
-            ? Colors.green.shade700
-            : (cartEstimate != null ? Colors.teal.shade800 : pinColor);
+      final pillColor = isBestPrice
+          ? Colors.green.shade700
+          : (cartEstimate != null ? Colors.teal.shade800 : pinColor);
 
-        final String priceText = productPrice != null
-            ? Utils.formatCurrency(productPrice.price)
-            : Utils.formatCurrency(cartEstimate!.totalPrice);
+      final String? priceText = productPrice != null
+          ? Utils.formatCurrency(productPrice.price)
+          : (cartEstimate != null ? Utils.formatCurrency(cartEstimate.totalPrice) : null);
 
-        return Marker(
-          point: LatLng(market.latitude!, market.longitude!),
-          width: 90,
-          height: 48,
-          alignment: Alignment.center,
-          child: RepaintBoundary(
-            child: GestureDetector(
+      return Marker(
+        point: LatLng(market.latitude!, market.longitude!),
+        width: hasPricePill ? 100 : 46,
+        height: hasPricePill ? 58 : 50,
+        alignment: Alignment.center,
+        child: RepaintBoundary(
+          child: GestureDetector(
             onTap: () => _selectMarket(market, openBottomSheet: false),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3.5),
-                  decoration: BoxDecoration(
-                    color: pillColor,
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: Colors.white, width: 1.6),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.28),
-                        blurRadius: 4,
-                        offset: const Offset(0, 2),
-                      ),
-                    ],
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (isBestPrice) const Text('👑 ', style: TextStyle(fontSize: 9.5)),
-                      if (productPrice?.verifiedReceipt == true)
-                        const Padding(
-                          padding: EdgeInsets.only(right: 3),
-                          child: Icon(Icons.check_circle, size: 10, color: Colors.lightGreenAccent),
+                if (hasPricePill && priceText != null)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2.5),
+                    margin: const EdgeInsets.only(bottom: 2),
+                    decoration: BoxDecoration(
+                      color: pillColor,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.white, width: 1.4),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.3),
+                          blurRadius: 4,
+                          offset: const Offset(0, 2),
                         ),
-                      Text(
-                        priceText,
-                        style: const TextStyle(
+                      ],
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (isBestPrice) const Text('👑 ', style: TextStyle(fontSize: 9)),
+                        if (productPrice?.verifiedReceipt == true)
+                          const Padding(
+                            padding: EdgeInsets.only(right: 2.5),
+                            child: Icon(Icons.check_circle, size: 9.5, color: Colors.lightGreenAccent),
+                          ),
+                        Text(
+                          priceText,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 10.5,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                // Pin estilo Mapew com Ícone de Supermercado e Ponteiro Inferior
+                Stack(
+                  alignment: Alignment.bottomCenter,
+                  children: [
+                    // Ponteiro apontando para a coordenada geográfica
+                    Transform.translate(
+                      offset: const Offset(0, 4.5),
+                      child: Transform.rotate(
+                        angle: 0.785398, // 45 graus
+                        child: Container(
+                          width: 9,
+                          height: 9,
+                          decoration: BoxDecoration(
+                            color: pinColor,
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withValues(alpha: 0.25),
+                                blurRadius: 3,
+                                offset: const Offset(1, 1),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                    // Cabeça do Pin com Ícone de Fachada de Supermercado
+                    Container(
+                      width: 34,
+                      height: 34,
+                      decoration: BoxDecoration(
+                        color: pinColor,
+                        shape: BoxShape.circle,
+                        border: Border.all(color: Colors.white, width: 2.2),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.28),
+                            blurRadius: 5,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                      child: Center(
+                        child: Icon(
+                          isCheapest ? Icons.workspace_premium_rounded : Icons.storefront_rounded,
+                          size: 19,
                           color: Colors.white,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 11,
                         ),
                       ),
-                    ],
-                  ),
-                ),
-                Container(
-                  width: 6,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: pillColor,
-                    shape: BoxShape.circle,
-                  ),
+                    ),
+                  ],
                 ),
               ],
             ),
           ),
         ),
       );
-      }
-
-      // Pin padrão limpo e leve (sem texto), com RepaintBoundary para 60fps constantes
-      return Marker(
-        point: LatLng(market.latitude!, market.longitude!),
-        width: 38,
-        height: 38,
-        alignment: Alignment.center,
-        child: RepaintBoundary(
-          child: GestureDetector(
-            onTap: () => _selectMarket(market, openBottomSheet: false),
-            child: Container(
-              width: 32,
-              height: 32,
-              decoration: BoxDecoration(
-                color: pinColor,
-                shape: BoxShape.circle,
-                border: Border.all(color: Colors.white, width: 2.2),
-              ),
-              child: Icon(
-                isCheapest ? Icons.workspace_premium_rounded : Icons.location_on_rounded,
-                size: 18,
-                color: Colors.white,
-              ),
-            ),
-          ),
-        ),
-      );
     }
 
-    // Quando clicado/selecionado: exibe o balão informativo acima do pin sem alterar o ponto âncora do mapa!
+    // Quando clicado/selecionado: destaca o mercado com halo brilhante, nome e distância
     return Marker(
       point: LatLng(market.latitude!, market.longitude!),
-      width: 38,
-      height: 38,
+      width: 170,
+      height: 90,
       alignment: Alignment.center,
       child: RepaintBoundary(
-        child: Stack(
-        clipBehavior: Clip.none,
-        alignment: Alignment.center,
-        children: [
-          // Balão informativo posicionado acima do pin (ancoragem física inalterada)
-          Positioned(
-            bottom: 42,
-            child: GestureDetector(
-              onTap: () => _showMarketBottomSheet(market),
-              child: Container(
-                constraints: const BoxConstraints(maxWidth: 220),
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        child: GestureDetector(
+          onTap: () => _showMarketBottomSheet(market),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Balão informativo destacado estilo Mapew
+              Container(
+                constraints: const BoxConstraints(maxWidth: 165),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4.5),
+                margin: const EdgeInsets.only(bottom: 2),
                 decoration: BoxDecoration(
-                  color: isCheapest ? const Color(0xFFFF8F00) : primary,
+                  color: isCheapest ? const Color(0xFFFF8F00) : pinColor,
                   borderRadius: BorderRadius.circular(14),
                   border: Border.all(color: Colors.white, width: 1.8),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.28),
+                      color: Colors.black.withValues(alpha: 0.35),
                       blurRadius: 6,
                       offset: const Offset(0, 2),
                     ),
@@ -2095,53 +2126,73 @@ class _MarketMapScreenState extends State<MarketMapScreen> with TickerProviderSt
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    if (isCheapest) const Text('👑 ', style: TextStyle(fontSize: 11)),
+                    if (isCheapest) const Text('👑 ', style: TextStyle(fontSize: 10)),
                     Flexible(
                       child: Text(
                         market.supermarketName,
                         style: const TextStyle(
                           color: Colors.white,
                           fontWeight: FontWeight.bold,
-                          fontSize: 11.5,
+                          fontSize: 11,
                         ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),
-                    const SizedBox(width: 4),
-                    const Icon(Icons.info_outline_rounded, size: 13, color: Colors.white70),
+                    if (market.distanceMeters != null) ...[
+                      const SizedBox(width: 4),
+                      Text(
+                        '${(market.distanceMeters! / 1000).toStringAsFixed(1)}km',
+                        style: const TextStyle(color: Colors.white70, fontSize: 9.5),
+                      ),
+                    ],
                   ],
                 ),
               ),
-            ),
-          ),
-          // Pin centralizado com exatidão matemática nas coordenadas geográficas
-          GestureDetector(
-            onTap: () => _showMarketBottomSheet(market),
-            child: Container(
-              width: 36,
-              height: 36,
-              decoration: BoxDecoration(
-                color: pinColor,
-                shape: BoxShape.circle,
-                border: Border.all(color: Colors.white, width: 2.8),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.25),
-                    blurRadius: 6,
-                    offset: const Offset(0, 2),
+
+              // Pin destacado com halo/brilho
+              Stack(
+                alignment: Alignment.bottomCenter,
+                children: [
+                  Transform.translate(
+                    offset: const Offset(0, 5),
+                    child: Transform.rotate(
+                      angle: 0.785398,
+                      child: Container(
+                        width: 12,
+                        height: 12,
+                        color: pinColor,
+                      ),
+                    ),
+                  ),
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: pinColor,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.white, width: 2.8),
+                      boxShadow: [
+                        BoxShadow(
+                          color: pinColor.withValues(alpha: 0.55),
+                          blurRadius: 10,
+                          spreadRadius: 2,
+                        ),
+                      ],
+                    ),
+                    child: Center(
+                      child: Icon(
+                        isCheapest ? Icons.workspace_premium_rounded : Icons.storefront_rounded,
+                        size: 22,
+                        color: Colors.white,
+                      ),
+                    ),
                   ),
                 ],
               ),
-              child: Icon(
-                isCheapest ? Icons.workspace_premium_rounded : Icons.storefront_rounded,
-                size: 20,
-                color: Colors.white,
-              ),
-            ),
+            ],
           ),
-        ],
-      ),
+        ),
       ),
     );
   }
@@ -2169,21 +2220,36 @@ class _MarketMapScreenState extends State<MarketMapScreen> with TickerProviderSt
       ),
     );
 
-    // 2. Marcadores dos Mercados: MODO FOCO SOB DEMANDA (ZERO POLUIÇÃO)
-    // O mapa permanece limpo e fluido (60-120fps). Apenas renderiza marcadores se:
-    // a) O usuário selecionou um mercado no carrossel/lista (_selectedMarket)
-    // b) OU há uma busca ativa de texto (_searchQuery), exibindo até 8 resultados deduplicados.
+    // 2. Marcadores dos Mercados: MODO MAPEW DE ALTA PERFORMANCE (60-120fps)
+    // Recoloca os mercados com visual autêntico de supermercado e deduplicação espacial inteligente.
+    final Set<String> renderedCoords = {};
+    MarketComparison? selectedMarkerToRender;
+
+    // Se houver busca ativa, exibe os mercados correspondentes (até 15 lojas)
+    // Se não houver busca, exibe os 15 supermercados mais próximos do usuário (sem poluição)
+    final candidateMarkets = _searchQuery.trim().isNotEmpty
+        ? _filteredMarkets.take(15)
+        : _filteredMarkets.take(15);
+
+    for (var market in candidateMarkets) {
+      if (market.latitude == null || market.longitude == null) continue;
+      if (_selectedMarket?.supermarketName == market.supermarketName) {
+        selectedMarkerToRender = market;
+        continue;
+      }
+      // Deduplicação espacial: impede que 2 pins fiquem a menos de ~35 metros um do outro
+      final key = '${market.latitude!.toStringAsFixed(4)}_${market.longitude!.toStringAsFixed(4)}';
+      if (renderedCoords.contains(key)) continue;
+      renderedCoords.add(key);
+
+      markers.add(_buildMarketMarker(market, primary, cardColor, isDark));
+    }
+
+    // O mercado selecionado é sempre renderizado por último para ficar na camada do topo!
     if (_selectedMarket != null && _selectedMarket!.latitude != null && _selectedMarket!.longitude != null) {
       markers.add(_buildMarketMarker(_selectedMarket!, primary, cardColor, isDark));
-    } else if (_searchQuery.trim().isNotEmpty) {
-      final Set<String> seenCoords = {};
-      for (var market in _filteredMarkets.take(8)) {
-        if (market.latitude == null || market.longitude == null) continue;
-        final key = '${market.latitude!.toStringAsFixed(4)}_${market.longitude!.toStringAsFixed(4)}';
-        if (seenCoords.contains(key)) continue;
-        seenCoords.add(key);
-        markers.add(_buildMarketMarker(market, primary, cardColor, isDark));
-      }
+    } else if (selectedMarkerToRender != null) {
+      markers.add(_buildMarketMarker(selectedMarkerToRender, primary, cardColor, isDark));
     }
     // 3. Marcador de Ponto Escolhido no Mapa (se o usuário clicou/segurou em um ponto específico)
     if (_pickedMapPoint != null) {
