@@ -2282,19 +2282,16 @@ if (_isMarketLocked)
               await itemProvider.importSharedItems(
                 payload.items,
                 replaceExisting: false,
-                listTitle: payload.title,
-                newBudget: payload.budget,
+                listTitle: null,
+                newBudget: null,
               );
-              if (payload.spreadsheetId != null && payload.spreadsheetId!.isNotEmpty) {
-                await itemProvider.connectToSharedSpreadsheet(payload.spreadsheetId!);
-              }
               if (context.mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Itens da lista "${payload.title}" mesclados com sucesso!'), backgroundColor: Colors.green),
+                  SnackBar(content: Text('Itens mesclados na lista "${itemProvider.currentMonth}"!'), backgroundColor: Colors.green),
                 );
               }
             },
-            child: const Text('Mesclar'),
+            child: const Text('Mesclar no Carrinho'),
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white),
@@ -2306,16 +2303,13 @@ if (_isMarketLocked)
                 listTitle: payload.title,
                 newBudget: payload.budget,
               );
-              if (payload.spreadsheetId != null && payload.spreadsheetId!.isNotEmpty) {
-                await itemProvider.connectToSharedSpreadsheet(payload.spreadsheetId!);
-              }
               if (context.mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Lista "${payload.title}" carregada com sucesso!'), backgroundColor: Colors.green),
+                  SnackBar(content: Text('Lista "${payload.title}" salva e aberta com sucesso!'), backgroundColor: Colors.green),
                 );
               }
             },
-            child: const Text('Substituir'),
+            child: Text('Salvar Lista "${payload.title}"'),
           ),
         ],
       ),

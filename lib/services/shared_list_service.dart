@@ -2,30 +2,32 @@ import 'dart:convert';
 import '../models/item.dart';
 import '../providers/item_provider.dart';
 
-/// Payload estruturado de uma lista compartilhada entre dispositivos
+/// Payload estruturado de uma única lista compartilhada entre dispositivos
 class SharedListPayload {
   final String title;
   final double budget;
   final List<Item> items;
-  final String? spreadsheetId;
 
   const SharedListPayload({
     required this.title,
     required this.budget,
     required this.items,
-    this.spreadsheetId,
   });
 }
 
 /// Serviço responsável por codificar e decodificar listas compartilhadas
-/// via NFC, QR Code e links universais.
+/// via NFC, QR Code e links universais, garantindo isolamento total por lista.
 class SharedListService {
   SharedListService._();
   static final SharedListService instance = SharedListService._();
 
-  /// Codifica a lista ativa em uma URI universal com todos os itens embutidos
-  String encodeList(ItemProvider provider) {
-    final itemsMap = provider.items.map((it) {
+  /// Codifica exclusivamente os itens da lista informada
+  String encodeSingleList({
+    required String title,
+    required double budget,
+    required List<Item> items,
+  }) {
+    final itemsMap = items.map((it) {
       return {
         'n': it.name,
         'q': it.quantity,
@@ -38,10 +40,10 @@ class SharedListService {
     }).toList();
 
     final data = {
-      't': provider.currentMonth,
-      'b': provider.budget,
+      't': title,
+      'b': budget,
       'i': itemsMap,
-      'ss': provider.customSpreadsheetId,
+      'mode': 'single_list',
     };
 
     final jsonStr = jsonEncode(data);
@@ -49,7 +51,17 @@ class SharedListService {
     return 'carrin://share?d=$base64Str';
   }
 
-  /// Decodifica uma URI ou string bruta no objeto de lista compartilhada
+  /// Codifica a lista atualmente ativa ou selecionada do provider
+  String encodeList(ItemProvider provider, {String? targetMonth}) {
+    final listTitle = targetMonth ?? provider.currentMonth;
+    final items = (listTitle == provider.currentMonth)
+        ? provider.items
+        : (provider.getCachedItemsForMonth(listTitle) ?? []);
+    final budget = (listTitle == provider.currentMonth) ? provider.budget : 0.0;
+    return encodeSingleList(title: listTitle, budget: budget, items: items);
+  }
+
+  /// Decodifica uma URI ou string bruta no objeto de lista compartilhada isolada
   SharedListPayload? decodeList(String rawInput) {
     try {
       String clean = rawInput.trim();
@@ -84,7 +96,6 @@ class SharedListService {
 
       final title = (data['t'] as String?) ?? 'Lista Compartilhada';
       final budget = (data['b'] as num?)?.toDouble() ?? 0.0;
-      final ss = data['ss'] as String?;
 
       final rawItems = data['i'] as List<dynamic>? ?? [];
       final List<Item> items = [];
@@ -107,7 +118,6 @@ class SharedListService {
         title: title,
         budget: budget,
         items: items,
-        spreadsheetId: ss,
       );
     } catch (_) {
       return null;

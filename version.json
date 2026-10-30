@@ -1,17 +1,16 @@
 {
-  "version": "1.3.602",
-  "build_number": 602,
+  "version": "1.3.603",
+  "build_number": 603,
   "release_date": "2026-10-30",
-  "title": "CARRIN v1.3.602",
+  "title": "CARRIN v1.3.603",
   "release_notes": [
-    "Aba de NFC 100% visível, restaurada e com transmissão e leitura ativas em destaque",
-    "Importação autônoma imediata da lista compartilhada no segundo celular via QR Code ou NFC (sem depender de login ou rede)",
-    "Opção de Mesclar ou Substituir produtos ao receber lista compartilhada",
-    "Compatibilidade universal com iPhone 15 Pro Max (Google Planilhas/Safari) e Android",
-    "Compartilhamento liberado para listas vazias e câmera universal para todos os tipos de código"
+    "Compartilhamento 100% isolado de uma lista de cada vez (sem misturar ou substituir outras listas)",
+    "Seletor dinâmico da lista a compartilhar no cabeçalho com pré-visualização",
+    "Opção de salvar como nova lista independente ou mesclar no carrinho atual sem afetar histórico ou contas",
+    "NFC e QR Code transportam somente a lista selecionada e funcionam sem conexão ou login"
   ],
-  "apk_url": "https://github.com/wmartins090-web/CARRIN/releases/download/v1.3.602/carrin_v1.3.602.apk",
-  "size_bytes": 120813529,
+  "apk_url": "https://github.com/wmartins090-web/CARRIN/releases/download/v1.3.603/carrin_v1.3.603.apk",
+  "size_bytes": 120846437,
   "is_active": true,
   "force_update": false
 }

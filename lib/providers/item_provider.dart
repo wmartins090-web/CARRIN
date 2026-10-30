@@ -1325,6 +1325,29 @@ class ItemProvider with ChangeNotifier {
     _safeNotify();
   }
 
+  /// Retorna os itens em cache para um determinado mês/lista sem alterar o mês ativo
+  List<Item>? getCachedItemsForMonth(String month) {
+    if (month == currentMonth) return List.from(_items);
+    if (_itemsCache.containsKey(month)) return List.from(_itemsCache[month]!);
+    return null;
+  }
+
+  /// Busca os itens de um mês/lista específico de forma assíncrona (cache ou banco local)
+  Future<List<Item>> getItemsForMonth(String month) async {
+    if (month == currentMonth) return List.from(_items);
+    if (_itemsCache.containsKey(month) && _itemsCache[month]!.isNotEmpty) {
+      return List.from(_itemsCache[month]!);
+    }
+    try {
+      final dbItems = await _dbHelper.getItems(month);
+      if (dbItems.isNotEmpty) {
+        _itemsCache[month] = dbItems;
+        return List.from(dbItems);
+      }
+    } catch (_) {}
+    return [];
+  }
+
   double get totalCost => _items.where((it) => it.isBought).fold(0.0, (sum, item) => sum + item.totalPrice);
   
   double get budget {

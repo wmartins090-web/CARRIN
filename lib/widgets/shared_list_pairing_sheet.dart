@@ -59,6 +59,7 @@ class _SharedListPairingSheetState extends State<SharedListPairingSheet>
   String? _spreadsheetId;
   String? _spreadsheetUrl;
   late String _carrinPayloadUri;
+  late String _selectedList;
   bool _isConnecting = false;
   bool _isUsingCustomSheet = false;
   bool _isSharingEmail = false;
@@ -76,7 +77,9 @@ class _SharedListPairingSheetState extends State<SharedListPairingSheet>
     _tabController = TabController(length: 3, vsync: this);
 
     final provider = Provider.of<ItemProvider>(context, listen: false);
-    _carrinPayloadUri = SharedListService.instance.encodeList(provider);
+    _selectedList = widget.listName;
+    _carrinPayloadUri = SharedListService.instance.encodeList(provider, targetMonth: _selectedList);
+    _updatePayloadForSelectedList();
 
     if (widget.initialCodeOrUri != null && widget.initialCodeOrUri!.trim().isNotEmpty) {
       _enterLinkController.text = widget.initialCodeOrUri!.trim();
@@ -84,6 +87,21 @@ class _SharedListPairingSheetState extends State<SharedListPairingSheet>
 
     _loadSpreadsheetData();
     _checkNfcSupport();
+  }
+
+  Future<void> _updatePayloadForSelectedList() async {
+    final provider = Provider.of<ItemProvider>(context, listen: false);
+    final items = await provider.getItemsForMonth(_selectedList);
+    final budget = (_selectedList == provider.currentMonth) ? provider.budget : 0.0;
+    if (mounted) {
+      setState(() {
+        _carrinPayloadUri = SharedListService.instance.encodeSingleList(
+          title: _selectedList,
+          budget: budget,
+          items: items,
+        );
+      });
+    }
   }
 
   Future<void> _loadSpreadsheetData() async {
@@ -314,19 +332,16 @@ class _SharedListPairingSheetState extends State<SharedListPairingSheet>
               await provider.importSharedItems(
                 payload.items,
                 replaceExisting: false,
-                listTitle: payload.title,
-                newBudget: payload.budget,
+                listTitle: null,
+                newBudget: null,
               );
-              if (payload.spreadsheetId != null && payload.spreadsheetId!.isNotEmpty) {
-                await provider.connectToSharedSpreadsheet(payload.spreadsheetId!);
-              }
               if (context.mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Itens da lista "${payload.title}" mesclados!'), backgroundColor: Colors.green),
+                  SnackBar(content: Text('Itens mesclados na lista "${provider.currentMonth}"!'), backgroundColor: Colors.green),
                 );
               }
             },
-            child: const Text('Mesclar'),
+            child: const Text('Mesclar no Carrinho'),
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white),
@@ -338,16 +353,13 @@ class _SharedListPairingSheetState extends State<SharedListPairingSheet>
                 listTitle: payload.title,
                 newBudget: payload.budget,
               );
-              if (payload.spreadsheetId != null && payload.spreadsheetId!.isNotEmpty) {
-                await provider.connectToSharedSpreadsheet(payload.spreadsheetId!);
-              }
               if (context.mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Lista "${payload.title}" carregada com sucesso!'), backgroundColor: Colors.green),
+                  SnackBar(content: Text('Lista "${payload.title}" salva e aberta com sucesso!'), backgroundColor: Colors.green),
                 );
               }
             },
-            child: const Text('Substituir'),
+            child: Text('Salvar Lista "${payload.title}"'),
           ),
         ],
       ),
@@ -594,6 +606,69 @@ class _SharedListPairingSheetState extends State<SharedListPairingSheet>
                 onPressed: () => Navigator.pop(context),
               ),
             ],
+          ),
+
+          // Card de Seleção e Confirmação de Lista Única
+          Container(
+            margin: const EdgeInsets.only(top: 10, bottom: 4),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: primary.withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: primary.withValues(alpha: 0.25)),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.inventory_2_outlined, color: primary, size: 22),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Compartilhando exclusivamente a lista:',
+                        style: TextStyle(fontSize: 11, color: Colors.grey),
+                      ),
+                      Text(
+                        _selectedList,
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                      ),
+                    ],
+                  ),
+                ),
+                Consumer<ItemProvider>(
+                  builder: (ctx, prov, _) {
+                    if (prov.months.length <= 1) return const SizedBox.shrink();
+                    return PopupMenuButton<String>(
+                      icon: const Icon(Icons.swap_horiz_rounded, size: 22),
+                      tooltip: 'Trocar Lista',
+                      onSelected: (newMonth) {
+                        setState(() {
+                          _selectedList = newMonth;
+                        });
+                        _updatePayloadForSelectedList();
+                      },
+                      itemBuilder: (popupCtx) => prov.months.map((m) {
+                        return PopupMenuItem<String>(
+                          value: m,
+                          child: Row(
+                            children: [
+                              Icon(
+                                m == _selectedList ? Icons.check_circle_rounded : Icons.radio_button_unchecked_rounded,
+                                size: 18,
+                                color: m == _selectedList ? primary : Colors.grey,
+                              ),
+                              const SizedBox(width: 8),
+                              Text(m, style: TextStyle(fontWeight: m == _selectedList ? FontWeight.bold : FontWeight.normal)),
+                            ],
+                          ),
+                        );
+                      }).toList(),
+                    );
+                  },
+                ),
+              ],
+            ),
           ),
 
           // Banner de Status se já estiver em planilha compartilhada
@@ -876,6 +951,27 @@ class _SharedListPairingSheetState extends State<SharedListPairingSheet>
       child: Column(
         children: [
           const SizedBox(height: 8),
+          Container(
+            padding: const EdgeInsets.all(10),
+            margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+            decoration: BoxDecoration(
+              color: Colors.amber.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.amber.withValues(alpha: 0.3)),
+            ),
+            child: const Row(
+              children: [
+                Icon(Icons.info_outline_rounded, color: Colors.orange, size: 20),
+                SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Para compartilhar SOMENTE esta lista isolada, utilize as abas NFC ou QR Code do CARRIN.',
+                    style: TextStyle(fontSize: 11.5, color: Colors.deepOrange),
+                  ),
+                ),
+              ],
+            ),
+          ),
           const Text(
             'Conecte por E-mail Google ou abra a planilha oficial na nuvem:',
             style: TextStyle(fontSize: 12, color: Colors.grey),
