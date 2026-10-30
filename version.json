@@ -1,17 +1,15 @@
 {
-  "version": "1.3.598",
-  "build_number": 598,
+  "version": "1.3.599",
+  "build_number": 599,
   "release_date": "2026-10-30",
-  "title": "CARRIN v1.3.598",
+  "title": "CARRIN v1.3.599",
   "release_notes": [
-    "Lista Compartilhada (NFC / QR): Conecte outro aparelho para editar juntos em tempo real",
-    "Aproximação NFC: Encoste a traseira dos aparelhos para parear instantaneamente",
-    "QR Code Dinâmico e Scanner: Aponte a câmera do iPhone 15 Pro Max ou outro celular",
-    "Código de Pareamento de 6 dígitos para conexão à distância",
-    "Todas as opções existentes preservadas: WhatsApp/Texto formatado e PDF"
+    "Habilitação de Permissões de NFC no AndroidManifest e Info.plist do iOS",
+    "Suporte completo a NFC Hardware (android.hardware.nfc e NDEF Tag)",
+    "Pareamento de Lista Compartilhada por aproximação ativo no sistema"
   ],
-  "apk_url": "https://github.com/wmartins090-web/CARRIN/releases/download/v1.3.598/carrin_v1.3.598.apk",
-  "size_bytes": 120698217,
+  "apk_url": "https://github.com/wmartins090-web/CARRIN/releases/download/v1.3.599/carrin_v1.3.599.apk",
+  "size_bytes": 120698265,
   "is_active": true,
   "force_update": false
 }

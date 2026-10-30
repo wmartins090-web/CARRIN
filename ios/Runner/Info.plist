@@ -4,6 +4,13 @@
 <dict>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
+	<key>NFCReaderUsageDescription</key>
+	<string>O CARRIN precisa do leitor de NFC para aproximar e sincronizar listas de compras com outros aparelhos.</string>
+	<key>com.apple.developer.nfc.readersession.formats</key>
+	<array>
+		<string>TAG</string>
+		<string>NDEF</string>
+	</array>
 	<key>NSCameraUsageDescription</key>
 	<string>O aplicativo precisa acessar a câmera para escanear os cupons fiscais e adicionar itens automaticamente.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
