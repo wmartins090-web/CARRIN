@@ -138,10 +138,12 @@ class _SharedListPairingSheetState extends State<SharedListPairingSheet>
       final availability = await NfcManager.instance.checkAvailability();
       if (mounted) {
         final isAvail = availability == NfcAvailability.enabled;
+        final provider = Provider.of<ItemProvider>(context, listen: false);
+        final defaultReceive = provider.items.isEmpty;
         setState(() {
           _isNfcAvailable = isAvail;
           if (isAvail) {
-            _startNfcSession(isTransmitMode: true);
+            _startNfcSession(isTransmitMode: !defaultReceive);
           } else {
             _nfcStatusText = 'NFC desativado ou não suportado neste aparelho';
           }

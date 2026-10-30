@@ -144,6 +144,11 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen>
         leading: const CloseButton(color: Colors.white),
         actions: [
           IconButton(
+            tooltip: 'Receber por NFC (Aproximação)',
+            icon: const Icon(Icons.nfc_rounded, color: Colors.lightBlueAccent),
+            onPressed: () => Navigator.pop(context, '__ACTION_OPEN_NFC__'),
+          ),
+          IconButton(
             tooltip: 'Alternar Lanterna',
             icon: ValueListenableBuilder<MobileScannerState>(
               valueListenable: controller,
@@ -302,19 +307,40 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen>
                   ),
                 ),
                 const SizedBox(height: 12),
-                TextButton.icon(
-                  style: TextButton.styleFrom(
-                    backgroundColor: Colors.white.withValues(alpha: 0.2),
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(25)),
-                  ),
-                  onPressed: _showManualInputDialog,
-                  icon: const Icon(Icons.keyboard_outlined, size: 18),
-                  label: const Text(
-                    'Digitar código manualmente',
-                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
-                  ),
+                Wrap(
+                  alignment: WrapAlignment.center,
+                  spacing: 10,
+                  runSpacing: 8,
+                  children: [
+                    TextButton.icon(
+                      style: TextButton.styleFrom(
+                        backgroundColor: Colors.white.withValues(alpha: 0.2),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+                      ),
+                      onPressed: _showManualInputDialog,
+                      icon: const Icon(Icons.keyboard_outlined, size: 16),
+                      label: const Text(
+                        'Digitar código',
+                        style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                    FilledButton.icon(
+                      style: FilledButton.styleFrom(
+                        backgroundColor: Colors.blueAccent.withValues(alpha: 0.9),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+                      ),
+                      onPressed: () => Navigator.pop(context, '__ACTION_OPEN_NFC__'),
+                      icon: const Icon(Icons.nfc_rounded, size: 16),
+                      label: const Text(
+                        'Receber por NFC',
+                        style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),

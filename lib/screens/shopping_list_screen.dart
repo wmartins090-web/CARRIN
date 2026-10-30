@@ -480,6 +480,17 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> with SingleTick
                             ),
                             centerTitle: true,
                             actions: [
+                              IconButton(
+                                icon: const Icon(Icons.nfc_rounded),
+                                tooltip: 'Lista Compartilhada (NFC / QR)',
+                                onPressed: () {
+                                  SharedListPairingSheet.show(
+                                    context,
+                                    listName: itemProvider.currentMonth,
+                                    activeUserEmail: itemProvider.activeUserEmail ?? 'anonimo',
+                                  );
+                                },
+                              ),
                               const SyncIndicator(),
                               IconButton(
                                 icon: const Icon(Icons.search),
@@ -757,6 +768,11 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> with SingleTick
                             const SliverFillRemaining(
                               child: ListSkeleton(),
                             )
+                          else if (itemProvider.items.isEmpty)
+                            SliverFillRemaining(
+                              hasScrollBody: false,
+                              child: _buildEmptyStateWidget(context, itemProvider),
+                            )
                           else
                             SliverPadding(
                               padding: const EdgeInsets.only(bottom: 120),
@@ -909,6 +925,15 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> with SingleTick
                   final result = await Navigator.push<String>(context, MaterialPageRoute(builder: (_) => const BarcodeScannerScreen()));
                   
                   if (result != null) {
+                    if (result == '__ACTION_OPEN_NFC__') {
+                      if (!context.mounted) return;
+                      SharedListPairingSheet.show(
+                        context,
+                        listName: itemProvider.currentMonth,
+                        activeUserEmail: itemProvider.activeUserEmail ?? 'anonimo',
+                      );
+                      return;
+                    }
                     final trimmed = result.trim();
                     if (trimmed.isEmpty) return;
 
@@ -2521,6 +2546,74 @@ if (_isMarketLocked)
     buffer.writeln('\n_Gerado pelo Carrin_ 🛒');
 
     Share.share(buffer.toString(), subject: 'Lista de Compras: $monthName');
+  }
+
+  Widget _buildEmptyStateWidget(BuildContext context, ItemProvider provider) {
+    final theme = Theme.of(context);
+    final primary = theme.primaryColor;
+
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              width: 90,
+              height: 90,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: primary.withValues(alpha: 0.1),
+              ),
+              child: Icon(Icons.shopping_cart_outlined, size: 44, color: primary),
+            ),
+            const SizedBox(height: 18),
+            Text(
+              'Sua lista está vazia',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: theme.colorScheme.onSurface),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Você pode criar seus itens ou entrar em uma lista compartilhada por NFC ou QR Code de outro celular.',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 13, color: theme.colorScheme.onSurface.withValues(alpha: 0.65)),
+            ),
+            const SizedBox(height: 22),
+            FilledButton.icon(
+              style: FilledButton.styleFrom(
+                backgroundColor: Colors.blue[700],
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 12),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                elevation: 2,
+              ),
+              onPressed: () {
+                SharedListPairingSheet.show(
+                  context,
+                  listName: provider.currentMonth,
+                  activeUserEmail: provider.activeUserEmail ?? 'anonimo',
+                );
+              },
+              icon: const Icon(Icons.nfc_rounded, size: 20),
+              label: const Text(
+                'Entrar por NFC / QR Code',
+                style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.bold),
+              ),
+            ),
+            const SizedBox(height: 10),
+            OutlinedButton.icon(
+              style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+              ),
+              onPressed: () => _showEditDialog(context, null),
+              icon: const Icon(Icons.add_rounded, size: 18),
+              label: const Text('Adicionar Primeiro Item'),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   void _showPdfExportDialog(BuildContext context, ItemProvider provider) {
