@@ -73,6 +73,7 @@ class UserSheetsService {
 
   Future<void> init({String? title}) async {
     if (title != null) _currentSheetTitle = title;
+    _spreadsheetId = null; // Reavalia para o mês/lista atual
     await _ensureSpreadsheetExists();
   }
 
@@ -85,6 +86,106 @@ class UserSheetsService {
       return match.group(1)!;
     }
     return clean;
+  }
+
+  String _normalizeKey(String title) => title.trim().toLowerCase().replaceAll(RegExp(r'\s+'), '_');
+
+  Future<String?> getSpreadsheetIdForMonth(String month) async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString('custom_sheet_id_for_${_normalizeKey(month)}');
+  }
+
+  Future<void> setSpreadsheetIdForMonth(String month, String? spreadsheetId) async {
+    final prefs = await SharedPreferences.getInstance();
+    final key = 'custom_sheet_id_for_${_normalizeKey(month)}';
+    if (spreadsheetId == null || spreadsheetId.trim().isEmpty) {
+      await prefs.remove(key);
+    } else {
+      await prefs.setString(key, extractSpreadsheetId(spreadsheetId));
+    }
+  }
+
+  /// Cria uma planilha dedicada no Google Drive exclusivamente para uma lista (ex: "Noite de Pizza"),
+  /// torna pública para edição com link, e associa a esta lista.
+  Future<String> createOrGetDedicatedSpreadsheetForList(
+    String listTitle,
+    List<Item> items, {
+    double budget = 0.0,
+  }) async {
+    // 1. Se já existir uma planilha dedicada para esta lista, garante permissão e retorna
+    final existingId = await getSpreadsheetIdForMonth(listTitle);
+    if (existingId != null && existingId.trim().isNotEmpty) {
+      try {
+        final driveApi = _driveApi;
+        if (driveApi != null) {
+          final permission = drive.Permission(role: 'writer', type: 'anyone');
+          await driveApi.permissions.create(permission, existingId);
+        }
+      } catch (_) {}
+      return existingId;
+    }
+
+    final driveApi = _driveApi;
+    final sheetsApi = _sheetsApi;
+    if (driveApi == null || sheetsApi == null) {
+      throw Exception('Conta do Google não autenticada no app');
+    }
+
+    // 2. Cria a planilha no Google Drive com o nome exclusivo da lista
+    final fileName = 'CARRIN - $listTitle';
+    var file = drive.File()
+      ..name = fileName
+      ..mimeType = 'application/vnd.google-apps.spreadsheet';
+    final created = await driveApi.files.create(file);
+    final newId = created.id!;
+
+    // 3. Torna o arquivo público para edição via link
+    try {
+      final permission = drive.Permission(
+        role: 'writer',
+        type: 'anyone',
+      );
+      await driveApi.permissions.create(permission, newId);
+    } catch (e) {
+      debugPrint('Aviso ao liberar link público da lista dedicada: $e');
+    }
+
+    // 4. Salva a associação no aparelho
+    await setSpreadsheetIdForMonth(listTitle, newId);
+
+    // 5. Configura a primeira aba com o título da lista, cabeçalhos, orçamento e itens
+    try {
+      final ss = await sheetsApi.spreadsheets.get(newId);
+      final firstSheetId = ss.sheets?.firstOrNull?.properties?.sheetId ?? 0;
+
+      final renameReq = sheets.Request()
+        ..updateSheetProperties = (sheets.UpdateSheetPropertiesRequest()
+          ..properties = (sheets.SheetProperties()
+            ..sheetId = firstSheetId
+            ..title = listTitle)
+          ..fields = 'title');
+      await sheetsApi.spreadsheets.batchUpdate(
+        sheets.BatchUpdateSpreadsheetRequest()..requests = [renameReq],
+        newId,
+      );
+
+      final prevTitle = _currentSheetTitle;
+      final prevId = _spreadsheetId;
+      _spreadsheetId = newId;
+      _currentSheetTitle = listTitle;
+
+      await createNewMonth(listTitle, false, initialBudget: budget);
+      if (items.isNotEmpty) {
+        await overwriteAllItems(listTitle, items);
+      }
+
+      _currentSheetTitle = prevTitle;
+      _spreadsheetId = prevId;
+    } catch (e) {
+      debugPrint('Erro ao inicializar estrutura da lista dedicada: $e');
+    }
+
+    return newId;
   }
 
   /// Sets a custom Google Spreadsheet ID or URL, or clears it to use the default Drive sheet.
@@ -191,6 +292,13 @@ class UserSheetsService {
 
   Future<void> _ensureSpreadsheetExists() async {
     if (_spreadsheetId != null) return;
+
+    // 0. Prioriza planilha compartilhada dedicada para esta lista específica
+    final monthSpecificId = await getSpreadsheetIdForMonth(_currentSheetTitle);
+    if (monthSpecificId != null && monthSpecificId.trim().isNotEmpty) {
+      _spreadsheetId = monthSpecificId.trim();
+      return;
+    }
 
     // 1. Prioriza planilha personalizada configurada pelo usuário
     final customId = await getCustomSpreadsheetId();

@@ -1,15 +1,15 @@
 {
-  "version": "1.3.603",
-  "build_number": 603,
+  "version": "1.3.604",
+  "build_number": 604,
   "release_date": "2026-10-30",
-  "title": "CARRIN v1.3.603",
+  "title": "CARRIN v1.3.604",
   "release_notes": [
-    "Compartilhamento 100% isolado de uma lista de cada vez (sem misturar ou substituir outras listas)",
-    "Seletor dinâmico da lista a compartilhar no cabeçalho com pré-visualização",
-    "Opção de salvar como nova lista independente ou mesclar no carrinho atual sem afetar histórico ou contas",
-    "NFC e QR Code transportam somente a lista selecionada e funcionam sem conexão ou login"
+    "Planilha compartilhada dedicada por lista (ex: 'Noite de Pizza')",
+    "Apenas a lista selecionada é compartilhada e criada no app do outro usuário",
+    "Sincronização em tempo real via Google Sheets exclusiva para a lista compartilhada",
+    "Preserva 100% as outras listas pessoais e histórico em ambos os aparelhos"
   ],
-  "apk_url": "https://github.com/wmartins090-web/CARRIN/releases/download/v1.3.603/carrin_v1.3.603.apk",
+  "apk_url": "https://github.com/wmartins090-web/CARRIN/releases/download/v1.3.604/carrin_v1.3.604.apk",
   "size_bytes": 120846437,
   "is_active": true,
   "force_update": false

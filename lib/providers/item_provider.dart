@@ -1348,6 +1348,51 @@ class ItemProvider with ChangeNotifier {
     return [];
   }
 
+  /// Obtém ou cria uma planilha compartilhada exclusiva para uma lista específica
+  Future<String?> getOrCreateDedicatedSpreadsheetForList(String listTitle) async {
+    try {
+      final items = await getItemsForMonth(listTitle);
+      final listBudget = (listTitle == currentMonth) ? budget : 0.0;
+      return await _service.createOrGetDedicatedSpreadsheetForList(listTitle, items, budget: listBudget);
+    } catch (e) {
+      debugPrint('Erro ao criar planilha dedicada para $listTitle: $e');
+      return null;
+    }
+  }
+
+  /// Retorna o ID da planilha dedicada da lista se existir
+  Future<String?> getDedicatedSpreadsheetIdForList(String listTitle) =>
+      _service.getSpreadsheetIdForMonth(listTitle);
+
+  /// Importa a lista compartilhada associando à planilha dedicada dela
+  Future<void> importSharedListWithSpreadsheet({
+    required String title,
+    required String? spreadsheetId,
+    required List<Item> fallbackItems,
+    double? budget,
+  }) async {
+    // 1. Cria a lista no app do outro usuário se ainda não existir
+    if (!_months.contains(title)) {
+      await createNewMonth(title, false, initialBudget: budget);
+    }
+
+    // 2. Se houver planilha compartilhada para esta lista, associa o ID exclusivamente a ela
+    if (spreadsheetId != null && spreadsheetId.isNotEmpty) {
+      await _service.setSpreadsheetIdForMonth(title, spreadsheetId);
+    }
+
+    // 3. Alterna para esta lista
+    await switchMonth(title);
+
+    // 4. Carrega os itens da planilha ou salva os itens locais
+    if (spreadsheetId != null && spreadsheetId.isNotEmpty && isSyncEnabled) {
+      await loadItems(force: true);
+    } else {
+      await importSharedItems(fallbackItems, replaceExisting: true, listTitle: title, newBudget: budget);
+    }
+    _safeNotify();
+  }
+
   double get totalCost => _items.where((it) => it.isBought).fold(0.0, (sum, item) => sum + item.totalPrice);
   
   double get budget {

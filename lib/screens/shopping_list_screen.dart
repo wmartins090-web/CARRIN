@@ -2297,19 +2297,19 @@ if (_isMarketLocked)
             style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white),
             onPressed: () async {
               Navigator.pop(ctx);
-              await itemProvider.importSharedItems(
-                payload.items,
-                replaceExisting: true,
-                listTitle: payload.title,
-                newBudget: payload.budget,
+              await itemProvider.importSharedListWithSpreadsheet(
+                title: payload.title,
+                spreadsheetId: payload.spreadsheetId,
+                fallbackItems: payload.items,
+                budget: payload.budget,
               );
               if (context.mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Lista "${payload.title}" salva e aberta com sucesso!'), backgroundColor: Colors.green),
+                  SnackBar(content: Text('Lista "${payload.title}" criada e conectada com sucesso!'), backgroundColor: Colors.green),
                 );
               }
             },
-            child: Text('Salvar Lista "${payload.title}"'),
+            child: Text('Criar Lista "${payload.title}"'),
           ),
         ],
       ),

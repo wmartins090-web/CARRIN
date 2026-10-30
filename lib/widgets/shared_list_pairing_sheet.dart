@@ -93,12 +93,23 @@ class _SharedListPairingSheetState extends State<SharedListPairingSheet>
     final provider = Provider.of<ItemProvider>(context, listen: false);
     final items = await provider.getItemsForMonth(_selectedList);
     final budget = (_selectedList == provider.currentMonth) ? provider.budget : 0.0;
+
+    String? dedicatedSsId = await provider.getDedicatedSpreadsheetIdForList(_selectedList);
+    if (dedicatedSsId == null && provider.isSyncEnabled) {
+      dedicatedSsId = await provider.getOrCreateDedicatedSpreadsheetForList(_selectedList);
+    }
+
     if (mounted) {
       setState(() {
+        _spreadsheetId = dedicatedSsId;
+        if (dedicatedSsId != null && dedicatedSsId.isNotEmpty) {
+          _spreadsheetUrl = 'https://docs.google.com/spreadsheets/d/$dedicatedSsId/edit';
+        }
         _carrinPayloadUri = SharedListService.instance.encodeSingleList(
           title: _selectedList,
           budget: budget,
           items: items,
+          spreadsheetId: dedicatedSsId,
         );
       });
     }
@@ -307,18 +318,32 @@ class _SharedListPairingSheetState extends State<SharedListPairingSheet>
           children: [
             Icon(Icons.download_for_offline_rounded, color: Colors.green),
             SizedBox(width: 10),
-            Text('Lista Recebida!', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+            Text('Lista Compartilhada!', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
           ],
         ),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Lista: "${payload.title}"', style: const TextStyle(fontWeight: FontWeight.bold)),
+            Text('Lista: "${payload.title}"', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
             const SizedBox(height: 6),
             Text('Contém ${payload.items.length} itens cadastrados.'),
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Colors.green.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Text(
+                payload.spreadsheetId != null
+                    ? '✓ Esta lista será criada no seu app e sincronizará em tempo real pela planilha do Google (as suas outras listas não são alteradas).'
+                    : '✓ Somente esta lista será importada no seu app. Suas outras listas não são alteradas.',
+                style: const TextStyle(fontSize: 12, color: Colors.green),
+              ),
+            ),
             const SizedBox(height: 12),
-            const Text('Deseja carregar estes produtos na sua lista agora?'),
+            const Text('Como deseja abrir esta lista no seu aparelho?'),
           ],
         ),
         actions: [
@@ -347,19 +372,19 @@ class _SharedListPairingSheetState extends State<SharedListPairingSheet>
             style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white),
             onPressed: () async {
               Navigator.pop(ctx);
-              await provider.importSharedItems(
-                payload.items,
-                replaceExisting: true,
-                listTitle: payload.title,
-                newBudget: payload.budget,
+              await provider.importSharedListWithSpreadsheet(
+                title: payload.title,
+                spreadsheetId: payload.spreadsheetId,
+                fallbackItems: payload.items,
+                budget: payload.budget,
               );
               if (context.mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Lista "${payload.title}" salva e aberta com sucesso!'), backgroundColor: Colors.green),
+                  SnackBar(content: Text('Lista "${payload.title}" criada e conectada com sucesso!'), backgroundColor: Colors.green),
                 );
               }
             },
-            child: Text('Salvar Lista "${payload.title}"'),
+            child: Text('Criar Lista "${payload.title}"'),
           ),
         ],
       ),

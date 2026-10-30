@@ -7,11 +7,13 @@ class SharedListPayload {
   final String title;
   final double budget;
   final List<Item> items;
+  final String? spreadsheetId; // ID da planilha do Google dedicada a esta lista única
 
   const SharedListPayload({
     required this.title,
     required this.budget,
     required this.items,
+    this.spreadsheetId,
   });
 }
 
@@ -26,6 +28,7 @@ class SharedListService {
     required String title,
     required double budget,
     required List<Item> items,
+    String? spreadsheetId,
   }) {
     final itemsMap = items.map((it) {
       return {
@@ -43,6 +46,7 @@ class SharedListService {
       't': title,
       'b': budget,
       'i': itemsMap,
+      if (spreadsheetId != null && spreadsheetId.isNotEmpty) 'ss': spreadsheetId,
       'mode': 'single_list',
     };
 
@@ -52,13 +56,18 @@ class SharedListService {
   }
 
   /// Codifica a lista atualmente ativa ou selecionada do provider
-  String encodeList(ItemProvider provider, {String? targetMonth}) {
+  String encodeList(ItemProvider provider, {String? targetMonth, String? spreadsheetId}) {
     final listTitle = targetMonth ?? provider.currentMonth;
     final items = (listTitle == provider.currentMonth)
         ? provider.items
         : (provider.getCachedItemsForMonth(listTitle) ?? []);
     final budget = (listTitle == provider.currentMonth) ? provider.budget : 0.0;
-    return encodeSingleList(title: listTitle, budget: budget, items: items);
+    return encodeSingleList(
+      title: listTitle,
+      budget: budget,
+      items: items,
+      spreadsheetId: spreadsheetId,
+    );
   }
 
   /// Decodifica uma URI ou string bruta no objeto de lista compartilhada isolada
@@ -96,6 +105,7 @@ class SharedListService {
 
       final title = (data['t'] as String?) ?? 'Lista Compartilhada';
       final budget = (data['b'] as num?)?.toDouble() ?? 0.0;
+      final ss = (data['ss'] as String?);
 
       final rawItems = data['i'] as List<dynamic>? ?? [];
       final List<Item> items = [];
@@ -118,6 +128,7 @@ class SharedListService {
         title: title,
         budget: budget,
         items: items,
+        spreadsheetId: ss,
       );
     } catch (_) {
       return null;
