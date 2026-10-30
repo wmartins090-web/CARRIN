@@ -283,6 +283,22 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> with SingleTick
               onPressed: () => Navigator.pop(ctx),
               child: const Text('Cancelar', style: TextStyle(color: Colors.grey)),
             ),
+            OutlinedButton.icon(
+              icon: const Icon(Icons.fact_check_outlined, size: 16, color: Colors.teal),
+              label: const Text('Conferir Cupom', style: TextStyle(color: Colors.teal)),
+              onPressed: () {
+                Navigator.pop(ctx);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => ReceiptScannerScreen(
+                      cartItemsToCompare: provider.items,
+                      isVerificationMode: true,
+                    ),
+                  ),
+                );
+              },
+            ),
             ElevatedButton(
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.green,
@@ -524,6 +540,18 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> with SingleTick
                                     if (context.mounted) {
                                       Navigator.push(context, MaterialPageRoute(builder: (_) => const ReceiptScannerScreen()));
                                     }
+                                  } else if (value == 'verify_receipt') {
+                                    if (context.mounted) {
+                                      Navigator.push(
+                                        context,
+                                        MaterialPageRoute(
+                                          builder: (_) => ReceiptScannerScreen(
+                                            cartItemsToCompare: itemProvider.items,
+                                            isVerificationMode: true,
+                                          ),
+                                        ),
+                                      );
+                                    }
                                   } else if (value == 'share') {
                                     _shareList(context, itemProvider);
                                   } else if (value == 'finalize') {
@@ -572,6 +600,15 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> with SingleTick
                                     child: ListTile(
                                       leading: Icon(Icons.add_location_alt_outlined, color: Colors.blue),
                                       title: Text('Salvar Mercado por GPS'),
+                                      dense: true,
+                                      contentPadding: EdgeInsets.zero,
+                                    ),
+                                  ),
+                                  const PopupMenuItem(
+                                    value: 'verify_receipt',
+                                    child: ListTile(
+                                      leading: Icon(Icons.fact_check_outlined, color: Colors.teal),
+                                      title: Text('Conferir Cupom Fiscal (vs Carrinho)'),
                                       dense: true,
                                       contentPadding: EdgeInsets.zero,
                                     ),

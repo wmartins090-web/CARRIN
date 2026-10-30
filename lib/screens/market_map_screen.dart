@@ -1,3 +1,5 @@
+import 'package:provider/provider.dart';
+import '../providers/item_provider.dart';
 import '../widgets/pulsing_user_location_marker.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
@@ -73,6 +75,10 @@ class _MarketMapScreenState extends State<MarketMapScreen> {
 
   String _selectedChain = 'Todas';
   String _searchQuery = '';
+  bool _compareCartMode = false;
+  Map<String, MarketBasketEstimate> _cartEstimatesByMarket = {};
+  Map<String, CommunityPrice> _productPricesByMarket = {};
+  double? _lowestProductPriceInView;
   bool _showSearchSuggestions = false;
   bool _showRadiusCircle = true;
   bool _showMarketPins = true;
@@ -360,6 +366,94 @@ class _MarketMapScreenState extends State<MarketMapScreen> {
     _startGpsLiveTracking();
   }
 
+  Future<void> _refreshPriceOverlays() async {
+    final query = _searchQuery.trim().toLowerCase();
+    final itemProvider = Provider.of<ItemProvider>(context, listen: false);
+
+    // 1. Se estiver no modo Comparar Carrinho
+    if (_compareCartMode && itemProvider.items.isNotEmpty) {
+      final names = itemProvider.items.map((it) => it.name).toList();
+      final estimates = await CommunityPriceService.instance.compareMarketBaskets(
+        itemNames: names,
+        userLat: _userPosition.latitude,
+        userLng: _userPosition.longitude,
+        radiusKm: _radiusKm > 50.0 ? _radiusKm : 50.0,
+      );
+
+      final Map<String, MarketBasketEstimate> map = {};
+      for (final e in estimates) {
+        map[e.supermarketName.toLowerCase()] = e;
+        final pre = DefaultSupermarketsData.findMatch(e.supermarketName);
+        if (pre != null) {
+          map[pre.name.toLowerCase()] = e;
+        }
+      }
+
+      if (mounted) {
+        setState(() {
+          _cartEstimatesByMarket = map;
+          _productPricesByMarket = {};
+          _lowestProductPriceInView = null;
+        });
+      }
+      return;
+    }
+
+    // 2. Se houver pesquisa por nome de produto (ex: arroz, heineken, leite, tonico, requeijao)
+    if (query.isNotEmpty) {
+      final allPrices = await CommunityPriceService.instance.getRecentFeed(
+        userLat: _userPosition.latitude,
+        userLng: _userPosition.longitude,
+        radiusKm: _radiusKm > 50.0 ? _radiusKm : 50.0,
+        syncWithCloud: false,
+      );
+
+      final qTokens = DefaultSupermarketsData.extractTokens(query);
+      final Map<String, CommunityPrice> bestPriceMap = {};
+      double? minP;
+
+      for (final p in allPrices) {
+        final pNorm = DefaultSupermarketsData.normalize(p.productName);
+        bool match = false;
+        if (pNorm.contains(query)) {
+          match = true;
+        } else if (qTokens.isNotEmpty && qTokens.every((t) => pNorm.contains(t))) {
+          match = true;
+        }
+
+        if (match) {
+          final mCanon = (DefaultSupermarketsData.findMatch(p.supermarketName)?.name ?? p.supermarketName).toLowerCase();
+          final existing = bestPriceMap[mCanon];
+          if (existing == null || p.price < existing.price) {
+            bestPriceMap[mCanon] = p;
+            bestPriceMap[p.supermarketName.toLowerCase()] = p;
+          }
+          if (minP == null || p.price < minP) {
+            minP = p.price;
+          }
+        }
+      }
+
+      if (mounted) {
+        setState(() {
+          _cartEstimatesByMarket = {};
+          _productPricesByMarket = bestPriceMap;
+          _lowestProductPriceInView = minP;
+        });
+      }
+      return;
+    }
+
+    // 3. Sem pesquisa e sem carrinho
+    if (mounted && (_cartEstimatesByMarket.isNotEmpty || _productPricesByMarket.isNotEmpty)) {
+      setState(() {
+        _cartEstimatesByMarket = {};
+        _productPricesByMarket = {};
+        _lowestProductPriceInView = null;
+      });
+    }
+  }
+
   Future<void> _loadMarkets({bool syncWithCloud = false}) async {
     // Carrega sempre um raio amplo (50km) em memória para permitir busca instantânea por nome/rede,
     // filtrando pelo _radiusKm ativo na camada de exibição.
@@ -451,6 +545,8 @@ class _MarketMapScreenState extends State<MarketMapScreen> {
         _selectedMarket = null;
       }
     });
+
+    _refreshPriceOverlays();
 
     if (fitCameraIfFiltered && _filteredMarkets.isNotEmpty) {
       if (_filteredMarkets.length == 1) {
@@ -1783,8 +1879,89 @@ class _MarketMapScreenState extends State<MarketMapScreen> {
         ? const Color(0xFFFF8F00)
         : _parseColorHex(pre?.colorHex, primary);
 
+    // 🏷️ Mapew Feature: Verifica se há preço de produto ou cesta do carrinho para sobrepor no pin
+    final mKey = market.supermarketName.toLowerCase();
+    final preKey = pre?.name.toLowerCase() ?? mKey;
+
+    final productPrice = _productPricesByMarket[mKey] ?? _productPricesByMarket[preKey];
+    final cartEstimate = _cartEstimatesByMarket[mKey] ?? _cartEstimatesByMarket[preKey];
+
+    final hasPricePill = productPrice != null || cartEstimate != null;
+
     if (!isSelected) {
-      // Pin limpo e leve (sem texto), com RepaintBoundary para evitar re-render durante pan/zoom
+      // Se há um preço ou cesta ativa, desenha a pílula de preço flutuante estilo Mapew
+      if (hasPricePill) {
+        final bool isBestPrice = productPrice != null &&
+            _lowestProductPriceInView != null &&
+            productPrice.price <= (_lowestProductPriceInView! + 0.01);
+
+        final pillColor = isBestPrice
+            ? Colors.green.shade700
+            : (cartEstimate != null ? Colors.teal.shade800 : pinColor);
+
+        final String priceText = productPrice != null
+            ? Utils.formatCurrency(productPrice.price)
+            : Utils.formatCurrency(cartEstimate!.totalPrice);
+
+        return Marker(
+          point: LatLng(market.latitude!, market.longitude!),
+          width: 90,
+          height: 48,
+          alignment: Alignment.center,
+          child: GestureDetector(
+            onTap: () => _selectMarket(market, openBottomSheet: false),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3.5),
+                  decoration: BoxDecoration(
+                    color: pillColor,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: Colors.white, width: 1.6),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.28),
+                        blurRadius: 4,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (isBestPrice) const Text('👑 ', style: TextStyle(fontSize: 9.5)),
+                      if (productPrice?.verifiedReceipt == true)
+                        const Padding(
+                          padding: EdgeInsets.only(right: 3),
+                          child: Icon(Icons.check_circle, size: 10, color: Colors.lightGreenAccent),
+                        ),
+                      Text(
+                        priceText,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Container(
+                  width: 6,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: pillColor,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      }
+
+      // Pin padrão limpo e leve (sem texto), com RepaintBoundary para 60fps constantes
       return Marker(
         point: LatLng(market.latitude!, market.longitude!),
         width: 38,
@@ -2183,46 +2360,100 @@ class _MarketMapScreenState extends State<MarketMapScreen> {
 
                   const SizedBox(height: 8),
 
-                  // Linha 2: Filtro Horizontal por Redes (Guanabara, Supermarket, Assaí, Rede Economia, etc.)
+                  // Linha 2: Filtros Inteligentes (Modo Meu Carrinho + Redes de Supermercado)
                   SizedBox(
                     height: 36,
-                    child: ListView.builder(
+                    child: ListView(
                       scrollDirection: Axis.horizontal,
-                      itemCount: DefaultSupermarketsData.mainChains.length,
-                      itemBuilder: (context, idx) {
-                        final chain = DefaultSupermarketsData.mainChains[idx];
-                        final isSelected = _selectedChain == chain;
-                        return Padding(
-                          padding: const EdgeInsets.only(right: 6),
-                          child: FilterChip(
-                            selected: isSelected,
-                            showCheckmark: false,
-                            visualDensity: VisualDensity.compact,
-                            label: Text(
-                              chain == 'Todas' ? 'Todas as Redes (${_filteredMarkets.length})' : chain,
-                              style: TextStyle(
-                                fontWeight: isSelected ? FontWeight.bold : FontWeight.w600,
-                                fontSize: 12,
-                                color: isSelected ? Colors.white : (isDark ? Colors.white70 : Colors.black87),
+                      children: [
+                        // 🛒 Mapew Super Feature: Botão de Cesta Completa / Meu Carrinho no Mapa
+                        Builder(builder: (ctx) {
+                          final itemProvider = Provider.of<ItemProvider>(context, listen: false);
+                          final cartCount = itemProvider.items.length;
+
+                          return Padding(
+                            padding: const EdgeInsets.only(right: 6),
+                            child: FilterChip(
+                              selected: _compareCartMode,
+                              showCheckmark: false,
+                              visualDensity: VisualDensity.compact,
+                              avatar: Icon(
+                                Icons.shopping_basket_rounded,
+                                size: 14,
+                                color: _compareCartMode ? Colors.white : Colors.teal.shade700,
                               ),
-                            ),
-                            backgroundColor: cardColor.withValues(alpha: 0.92),
-                            selectedColor: primary,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(18),
-                              side: BorderSide(
-                                color: isSelected ? primary : Colors.grey.withValues(alpha: 0.3),
+                              label: Text(
+                                _compareCartMode
+                                    ? 'Cesta Carrinho ($cartCount)'
+                                    : 'Meu Carrinho no Mapa ($cartCount)',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 12,
+                                  color: _compareCartMode ? Colors.white : Colors.teal.shade800,
+                                ),
                               ),
+                              backgroundColor: Colors.teal.withValues(alpha: 0.12),
+                              selectedColor: Colors.teal.shade700,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(18),
+                                side: BorderSide(
+                                  color: _compareCartMode ? Colors.teal.shade700 : Colors.teal.withValues(alpha: 0.4),
+                                ),
+                              ),
+                              onSelected: (selected) {
+                                if (cartCount == 0 && selected) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text('Seu carrinho está vazio. Adicione itens na lista para comparar a cesta!'),
+                                      duration: Duration(seconds: 3),
+                                    ),
+                                  );
+                                  return;
+                                }
+                                setState(() {
+                                  _compareCartMode = selected;
+                                });
+                                _refreshPriceOverlays();
+                              },
                             ),
-                            onSelected: (_) {
-                              setState(() {
-                                _selectedChain = (_selectedChain == chain && chain != 'Todas') ? 'Todas' : chain;
-                              });
-                              _applyFilters(fitCameraIfFiltered: true);
-                            },
-                          ),
-                        );
-                      },
+                          );
+                        }),
+
+                        // Chips de Redes Tradicionais
+                        ...DefaultSupermarketsData.mainChains.map((chain) {
+                          final isSelected = _selectedChain == chain;
+                          return Padding(
+                            padding: const EdgeInsets.only(right: 6),
+                            child: FilterChip(
+                              selected: isSelected,
+                              showCheckmark: false,
+                              visualDensity: VisualDensity.compact,
+                              label: Text(
+                                chain == 'Todas' ? 'Todas (${_filteredMarkets.length})' : chain,
+                                style: TextStyle(
+                                  fontWeight: isSelected ? FontWeight.bold : FontWeight.w600,
+                                  fontSize: 12,
+                                  color: isSelected ? Colors.white : (isDark ? Colors.white70 : Colors.black87),
+                                ),
+                              ),
+                              backgroundColor: cardColor.withValues(alpha: 0.92),
+                              selectedColor: primary,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(18),
+                                side: BorderSide(
+                                  color: isSelected ? primary : Colors.grey.withValues(alpha: 0.3),
+                                ),
+                              ),
+                              onSelected: (_) {
+                                setState(() {
+                                  _selectedChain = (_selectedChain == chain && chain != 'Todas') ? 'Todas' : chain;
+                                });
+                                _applyFilters(fitCameraIfFiltered: true);
+                              },
+                            ),
+                          );
+                        }),
+                      ],
                     ),
                   ),
 
@@ -2432,6 +2663,10 @@ class _MarketMapScreenState extends State<MarketMapScreen> {
                   final isCheapest = m.isCheapest;
                   final isSelected = _selectedMarket?.supermarketName == m.supermarketName;
                   final pre = DefaultSupermarketsData.findMatch(m.supermarketName);
+                  final mKey = m.supermarketName.toLowerCase();
+                  final preKey = pre?.name.toLowerCase() ?? mKey;
+                  final basketEst = _compareCartMode ? (_cartEstimatesByMarket[mKey] ?? _cartEstimatesByMarket[preKey]) : null;
+                  final prodPrice = _productPricesByMarket[mKey] ?? _productPricesByMarket[preKey];
 
                   return GestureDetector(
                     onTap: () => _selectMarket(m, openBottomSheet: true),
@@ -2511,7 +2746,41 @@ class _MarketMapScreenState extends State<MarketMapScreen> {
                                       ),
                                       const SizedBox(width: 8),
                                     ],
-                                    if (m.averageItemPrice > 0)
+                                    if (basketEst != null)
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
+                                        decoration: BoxDecoration(
+                                          color: Colors.teal.shade50,
+                                          borderRadius: BorderRadius.circular(6),
+                                          border: Border.all(color: Colors.teal.shade300, width: 0.8),
+                                        ),
+                                        child: Text(
+                                          'Cesta: ${Utils.formatCurrency(basketEst.totalPrice)} (${basketEst.matchedItemsCount}/${basketEst.totalRequestedItems})',
+                                          style: TextStyle(
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.bold,
+                                            color: Colors.teal.shade800,
+                                          ),
+                                        ),
+                                      )
+                                    else if (prodPrice != null)
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
+                                        decoration: BoxDecoration(
+                                          color: Colors.green.shade50,
+                                          borderRadius: BorderRadius.circular(6),
+                                          border: Border.all(color: Colors.green.shade300, width: 0.8),
+                                        ),
+                                        child: Text(
+                                          'Preço: ${Utils.formatCurrency(prodPrice.price)}',
+                                          style: TextStyle(
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.bold,
+                                            color: Colors.green.shade800,
+                                          ),
+                                        ),
+                                      )
+                                    else if (m.averageItemPrice > 0)
                                       Text(
                                         'Média: ${Utils.formatCurrency(m.averageItemPrice)}',
                                         style: TextStyle(

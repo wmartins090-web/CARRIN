@@ -1014,6 +1014,115 @@ class CommunityPriceService {
     return result;
   }
 
+  /// Calcula o valor total estimado de uma cesta de itens (ex: carrinho do mês) para cada mercado
+  Future<List<MarketBasketEstimate>> compareMarketBaskets({
+    required List<String> itemNames,
+    double? userLat,
+    double? userLng,
+    double radiusKm = 50.0,
+    List<CommunityPrice>? preloadedPrices,
+    bool syncWithCloud = false,
+  }) async {
+    final cleanNames = itemNames.map((n) => n.trim()).where((n) => n.isNotEmpty).toSet().toList();
+    if (cleanNames.isEmpty) return [];
+
+    final allPrices = preloadedPrices ??
+        await getRecentFeed(
+          userLat: userLat,
+          userLng: userLng,
+          radiusKm: radiusKm,
+          syncWithCloud: syncWithCloud,
+        );
+
+    // Agrupa preços por supermercado canônico
+    final Map<String, List<CommunityPrice>> pricesByMarket = {};
+    final Map<String, CommunityPrice> sampleByMarket = {};
+
+    for (final p in allPrices) {
+      final mName = p.supermarketName.trim();
+      if (mName.isEmpty) continue;
+      final match = DefaultSupermarketsData.findMatch(mName, userLat: userLat, userLng: userLng);
+      final canonical = match?.name ?? mName;
+      pricesByMarket.putIfAbsent(canonical, () => []).add(p);
+      if (!sampleByMarket.containsKey(canonical) && p.latitude != null && p.longitude != null) {
+        sampleByMarket[canonical] = p;
+      }
+    }
+
+    final List<MarketBasketEstimate> results = [];
+
+    for (final entry in pricesByMarket.entries) {
+      final market = entry.key;
+      final mPrices = entry.value;
+
+      double total = 0.0;
+      final List<CommunityPrice> matched = [];
+      final List<String> missing = [];
+
+      for (final reqName in cleanNames) {
+        final reqTokens = DefaultSupermarketsData.extractTokens(reqName);
+        CommunityPrice? bestMatch;
+
+        for (final p in mPrices) {
+          final pNorm = DefaultSupermarketsData.normalize(p.productName);
+          final rNorm = DefaultSupermarketsData.normalize(reqName);
+
+          bool isHit = false;
+          if (pNorm == rNorm || pNorm.contains(rNorm) || rNorm.contains(pNorm)) {
+            isHit = true;
+          } else if (reqTokens.isNotEmpty && reqTokens.every((t) => pNorm.contains(t))) {
+            isHit = true;
+          }
+
+          if (isHit) {
+            if (bestMatch == null || p.price < bestMatch.price) {
+              bestMatch = p;
+            }
+          }
+        }
+
+        if (bestMatch != null) {
+          total += bestMatch.price;
+          matched.add(bestMatch);
+        } else {
+          missing.add(reqName);
+        }
+      }
+
+      if (matched.isNotEmpty) {
+        final sample = sampleByMarket[market];
+        final pre = DefaultSupermarketsData.findMatch(market, userLat: userLat, userLng: userLng);
+        final lat = sample?.latitude ?? pre?.latitude;
+        final lng = sample?.longitude ?? pre?.longitude;
+        double? dist;
+        if (userLat != null && userLng != null && lat != null && lng != null) {
+          dist = LocationService.instance.calculateDistance(userLat, userLng, lat, lng);
+        }
+
+        results.add(MarketBasketEstimate(
+          supermarketName: market,
+          latitude: lat,
+          longitude: lng,
+          distanceMeters: dist,
+          totalPrice: total,
+          matchedItemsCount: matched.length,
+          totalRequestedItems: cleanNames.length,
+          matchedPrices: matched,
+          missingItemNames: missing,
+        ));
+      }
+    }
+
+    // Ordena: primeiro os com mais itens encontrados, depois pelo menor valor total
+    results.sort((a, b) {
+      final compMatch = b.matchedItemsCount.compareTo(a.matchedItemsCount);
+      if (compMatch != 0) return compMatch;
+      return a.totalPrice.compareTo(b.totalPrice);
+    });
+
+    return results;
+  }
+
   /// Retorna o SQL para criar a tabela no Supabase com 1 clique
   String getSupabaseSetupSql() {
     return r'''

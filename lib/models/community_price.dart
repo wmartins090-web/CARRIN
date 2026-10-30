@@ -135,6 +135,33 @@ class MarketComparison {
   }
 }
 
+class MarketBasketEstimate {
+  final String supermarketName;
+  final double? latitude;
+  final double? longitude;
+  final double? distanceMeters;
+  final double totalPrice;
+  final int matchedItemsCount;
+  final int totalRequestedItems;
+  final List<CommunityPrice> matchedPrices;
+  final List<String> missingItemNames;
+
+  MarketBasketEstimate({
+    required this.supermarketName,
+    this.latitude,
+    this.longitude,
+    this.distanceMeters,
+    required this.totalPrice,
+    required this.matchedItemsCount,
+    required this.totalRequestedItems,
+    required this.matchedPrices,
+    required this.missingItemNames,
+  });
+
+  bool get isComplete => matchedItemsCount == totalRequestedItems && totalRequestedItems > 0;
+  double get matchPercentage => totalRequestedItems > 0 ? (matchedItemsCount / totalRequestedItems) * 100 : 0.0;
+}
+
 class ProductComparison {
   final String productName;
   final String unit;

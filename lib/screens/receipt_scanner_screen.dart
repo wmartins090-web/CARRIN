@@ -10,7 +10,14 @@ import '../services/community_price_service.dart';
 import 'barcode_scanner_screen.dart';
 
 class ReceiptScannerScreen extends StatefulWidget {
-  const ReceiptScannerScreen({super.key});
+  final List<Item>? cartItemsToCompare;
+  final bool isVerificationMode;
+
+  const ReceiptScannerScreen({
+    super.key,
+    this.cartItemsToCompare,
+    this.isVerificationMode = false,
+  });
 
   @override
   State<ReceiptScannerScreen> createState() => _ReceiptScannerScreenState();
@@ -337,7 +344,7 @@ class _ReceiptScannerScreenState extends State<ReceiptScannerScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Escanear Nota Fiscal'),
+        title: Text(widget.isVerificationMode ? 'Conferir Cupom Fiscal' : 'Escanear Nota Fiscal'),
         actions: [
           if (_extractedItems.isNotEmpty)
             IconButton(
@@ -451,6 +458,74 @@ class _ReceiptScannerScreenState extends State<ReceiptScannerScreen> {
                     ),
                   ),
 
+                  // 🛡️ Mapew Feature: Painel de Conferência Inteligente contra o Carrinho
+                  if (widget.isVerificationMode || (widget.cartItemsToCompare != null && widget.cartItemsToCompare!.isNotEmpty)) ...[
+                    Builder(builder: (ctx) {
+                      final cartList = widget.cartItemsToCompare ?? provider.items;
+                      final cartTotal = cartList.fold(0.0, (sum, it) => sum + (it.unitPrice * it.quantity));
+                      final diff = _totalAmount - cartTotal;
+                      final isHigher = diff > 0.05;
+                      final isLower = diff < -0.05;
+
+                      return Container(
+                        margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: isHigher
+                              ? Colors.red.withValues(alpha: 0.1)
+                              : (isLower ? Colors.green.withValues(alpha: 0.1) : Colors.blue.withValues(alpha: 0.1)),
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(
+                            color: isHigher
+                                ? Colors.red.shade400
+                                : (isLower ? Colors.green.shade400 : Colors.blue.shade300),
+                            width: 1.2,
+                          ),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Icon(
+                                  isHigher ? Icons.warning_amber_rounded : (isLower ? Icons.savings_outlined : Icons.verified_rounded),
+                                  color: isHigher ? Colors.red : (isLower ? Colors.green : Colors.blue),
+                                  size: 20,
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    isHigher
+                                        ? 'Atenção: Cobrança maior que o planejado!'
+                                        : (isLower ? 'Parabéns: Total do caixa foi menor!' : 'Conferência de Caixa Perfeita!'),
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 13,
+                                      color: isHigher ? Colors.red.shade900 : (isLower ? Colors.green.shade900 : Colors.blue.shade900),
+                                    ),
+                                  ),
+                                ),
+                                Text(
+                                  isHigher ? '+ ${Utils.formatCurrency(diff)}' : (isLower ? '- ${Utils.formatCurrency(diff.abs())}' : 'Bateu 100%'),
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 13,
+                                    color: isHigher ? Colors.red : (isLower ? Colors.green : Colors.blue),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 6),
+                            Text(
+                              'Seu Carrinho: ${Utils.formatCurrency(cartTotal)}  •  Nota Fiscal: ${Utils.formatCurrency(_totalAmount)}',
+                              style: TextStyle(fontSize: 11.5, color: Colors.grey.shade700),
+                            ),
+                          ],
+                        ),
+                      );
+                    }),
+                  ],
+
                   // Lista de Itens com badge inteligente de correspondência
                   Expanded(
                     child: ListView.builder(
@@ -492,22 +567,54 @@ class _ReceiptScannerScreenState extends State<ReceiptScannerScreen> {
                                   ),
                                 ),
                                 const SizedBox(width: 6),
-                                if (alreadyInList)
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                    decoration: BoxDecoration(
-                                      color: Colors.green.withValues(alpha: 0.12),
-                                      borderRadius: BorderRadius.circular(6),
-                                    ),
-                                    child: const Row(
+                                if (alreadyInList) ...[
+                                  Builder(builder: (c) {
+                                    final cartMatch = provider.items.firstWhere(
+                                      (it) => Utils.normalize(it.name) == normalized,
+                                    );
+                                    final priceDiff = item.unitPrice - cartMatch.unitPrice;
+                                    final hasDiff = cartMatch.unitPrice > 0 && priceDiff.abs() > 0.05;
+
+                                    return Row(
                                       mainAxisSize: MainAxisSize.min,
                                       children: [
-                                        Icon(Icons.check, size: 10, color: Colors.green),
-                                        SizedBox(width: 2),
-                                        Text('Na Lista', style: TextStyle(fontSize: 9, color: Colors.green, fontWeight: FontWeight.bold)),
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                          decoration: BoxDecoration(
+                                            color: Colors.green.withValues(alpha: 0.12),
+                                            borderRadius: BorderRadius.circular(6),
+                                          ),
+                                          child: const Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              Icon(Icons.check, size: 10, color: Colors.green),
+                                              SizedBox(width: 2),
+                                              Text('Na Lista', style: TextStyle(fontSize: 9, color: Colors.green, fontWeight: FontWeight.bold)),
+                                            ],
+                                          ),
+                                        ),
+                                        if (hasDiff) ...[
+                                          const SizedBox(width: 4),
+                                          Container(
+                                            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                                            decoration: BoxDecoration(
+                                              color: priceDiff > 0 ? Colors.red.withValues(alpha: 0.15) : Colors.amber.withValues(alpha: 0.2),
+                                              borderRadius: BorderRadius.circular(6),
+                                            ),
+                                            child: Text(
+                                              priceDiff > 0 ? 'Cobrou +${Utils.formatCurrency(priceDiff)}' : 'Desconto -${Utils.formatCurrency(priceDiff.abs())}',
+                                              style: TextStyle(
+                                                fontSize: 8.5,
+                                                fontWeight: FontWeight.bold,
+                                                color: priceDiff > 0 ? Colors.red.shade800 : Colors.amber.shade900,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
                                       ],
-                                    ),
-                                  )
+                                    );
+                                  }),
+                                ]
                                 else
                                   Container(
                                     padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
