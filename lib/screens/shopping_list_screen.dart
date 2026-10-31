@@ -1,5 +1,11 @@
+import 'dart:convert';
 import '../services/shared_list_service.dart';
 import '../services/user_sheets_service.dart';
+import 'package:flutter/foundation.dart';
+import 'package:nfc_manager/ndef_record.dart';
+import 'package:nfc_manager/nfc_manager.dart';
+import 'package:nfc_manager/nfc_manager_android.dart' as android_nfc;
+import 'package:nfc_manager/nfc_manager_ios.dart' as ios_nfc;
 import 'market_map_screen.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
@@ -65,6 +71,7 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> with SingleTick
   @override
   void initState() {
     super.initState();
+    _startPassiveNfcListener();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       final provider = Provider.of<ItemProvider>(context, listen: false);
@@ -76,12 +83,107 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> with SingleTick
 
   @override
   void dispose() {
+    _stopPassiveNfcListener();
     _marketInactivityTimer?.cancel();
     if (_marketMode) {
       WakelockPlus.disable();
     }
     _inlinePriceController.dispose();
     super.dispose();
+  }
+
+  void _stopPassiveNfcListener() {
+    try {
+      NfcManager.instance.stopSession();
+    } catch (_) {}
+  }
+
+  Future<void> _startPassiveNfcListener() async {
+    try {
+      final avail = await NfcManager.instance.checkAvailability();
+      if (avail != NfcAvailability.enabled || !mounted) return;
+
+      await NfcManager.instance.startSession(
+        pollingOptions: {NfcPollingOption.iso14443, NfcPollingOption.iso15693},
+        onDiscovered: (NfcTag tag) async {
+          if (!mounted) return;
+
+          String? extracted;
+          try {
+            if (defaultTargetPlatform == TargetPlatform.android) {
+              final ndef = android_nfc.NdefAndroid.from(tag);
+              if (ndef != null) {
+                final msg = ndef.cachedNdefMessage ?? await ndef.getNdefMessage();
+                if (msg != null) {
+                  extracted = _extractTextFromNdef(msg);
+                }
+              }
+            } else if (defaultTargetPlatform == TargetPlatform.iOS) {
+              final ndefIos = ios_nfc.NdefIos.from(tag);
+              if (ndefIos != null && ndefIos.cachedNdefMessage != null) {
+                extracted = _extractTextFromNdef(ndefIos.cachedNdefMessage!);
+              }
+            }
+          } catch (_) {}
+
+          if (extracted != null && extracted.isNotEmpty && mounted) {
+            final payload = SharedListService.instance.decodeList(extracted);
+            if (payload != null) {
+              try {
+                Vibration.vibrate(duration: 50);
+              } catch (_) {
+                HapticFeedback.heavyImpact();
+              }
+              final itemProvider = Provider.of<ItemProvider>(context, listen: false);
+              _showImportSharedListDialog(context, payload, itemProvider);
+            }
+          }
+        },
+      );
+    } catch (_) {}
+  }
+
+  String? _extractTextFromNdef(NdefMessage message) {
+    for (final record in message.records) {
+      try {
+        if (record.typeNameFormat == TypeNameFormat.wellKnown &&
+            record.type.length == 1 &&
+            record.type[0] == 0x55) {
+          final prefixCode = record.payload.isNotEmpty ? record.payload[0] : 0;
+          final body = record.payload.length > 1
+              ? utf8.decode(record.payload.sublist(1), allowMalformed: true)
+              : '';
+          final prefix = switch (prefixCode) {
+            1 => 'http://www.',
+            2 => 'https://www.',
+            3 => 'http://',
+            4 => 'https://',
+            _ => '',
+          };
+          return '$prefix$body';
+        } else {
+          final text = utf8.decode(record.payload, allowMalformed: true);
+          if (text.contains('carrin://') || text.contains('docs.google.com') || text.contains('{')) {
+            return text;
+          }
+        }
+      } catch (_) {}
+    }
+    return null;
+  }
+
+  Future<void> _openPairingSheet({bool defaultTransmit = false}) async {
+    _stopPassiveNfcListener();
+    final itemProvider = Provider.of<ItemProvider>(context, listen: false);
+    await SharedListPairingSheet.show(
+      context,
+      listName: itemProvider.currentMonth,
+      activeUserEmail: itemProvider.activeUserEmail ?? 'anonimo',
+      defaultTransmit: defaultTransmit,
+    );
+    if (mounted) {
+      _startPassiveNfcListener();
+    }
   }
 
   void _onUserInteraction() {
@@ -485,11 +587,7 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> with SingleTick
                                 icon: const Icon(Icons.nfc_rounded),
                                 tooltip: 'Lista Compartilhada (NFC / QR)',
                                 onPressed: () {
-                                  SharedListPairingSheet.show(
-                                    context,
-                                    listName: itemProvider.currentMonth,
-                                    activeUserEmail: itemProvider.activeUserEmail ?? 'anonimo',
-                                  );
+                                  _openPairingSheet(defaultTransmit: false);
                                 },
                               ),
                               const SyncIndicator(),
@@ -928,11 +1026,7 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> with SingleTick
                   if (result != null) {
                     if (result == '__ACTION_OPEN_NFC__') {
                       if (!context.mounted) return;
-                      SharedListPairingSheet.show(
-                        context,
-                        listName: itemProvider.currentMonth,
-                        activeUserEmail: itemProvider.activeUserEmail ?? 'anonimo',
-                      );
+                      _openPairingSheet(defaultTransmit: false);
                       return;
                     }
                     final trimmed = result.trim();
@@ -948,11 +1042,7 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> with SingleTick
 
                     if (trimmed.startsWith('carrin://pair') || trimmed.contains('carrin.app/pair')) {
                       if (!context.mounted) return;
-                      SharedListPairingSheet.show(
-                        context,
-                        listName: itemProvider.currentMonth,
-                        activeUserEmail: itemProvider.activeUserEmail ?? 'anonimo',
-                      );
+                      _openPairingSheet(defaultTransmit: false);
                       return;
                     }
 
@@ -2431,11 +2521,7 @@ if (_isMarketLocked)
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
               onTap: () {
                 Navigator.pop(context);
-                SharedListPairingSheet.show(
-                  context,
-                  listName: provider.currentMonth,
-                  activeUserEmail: provider.activeUserEmail ?? 'anonimo',
-                );
+                _openPairingSheet(defaultTransmit: true);
               },
             ),
             const Divider(height: 16),
@@ -2610,11 +2696,7 @@ if (_isMarketLocked)
                 elevation: 2,
               ),
               onPressed: () {
-                SharedListPairingSheet.show(
-                  context,
-                  listName: provider.currentMonth,
-                  activeUserEmail: provider.activeUserEmail ?? 'anonimo',
-                );
+                _openPairingSheet(defaultTransmit: false);
               },
               icon: const Icon(Icons.nfc_rounded, size: 20),
               label: const Text(

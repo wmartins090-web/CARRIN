@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import '../models/item.dart';
 import '../providers/item_provider.dart';
 
@@ -23,7 +24,7 @@ class SharedListService {
   SharedListService._();
   static final SharedListService instance = SharedListService._();
 
-  /// Codifica exclusivamente os itens da lista informada
+  /// Codifica exclusivamente os itens da lista informada com compressão ultra-leve GZIP
   String encodeSingleList({
     required String title,
     required double budget,
@@ -31,28 +32,29 @@ class SharedListService {
     String? spreadsheetId,
   }) {
     final itemsMap = items.map((it) {
-      return {
-        'n': it.name,
-        'q': it.quantity,
-        'p': it.unitPrice,
-        'c': it.category,
-        'k': it.isKg,
-        'b': it.isBought,
-        'bc': it.barcode,
-      };
+      final map = <String, dynamic>{'n': it.name};
+      if (it.quantity != 1.0) map['q'] = it.quantity;
+      if (it.unitPrice > 0.0) map['p'] = it.unitPrice;
+      if (it.category != 'Outros' && it.category.isNotEmpty) map['c'] = it.category;
+      if (it.isKg) map['k'] = 1;
+      if (it.isBought) map['b'] = 1;
+      if (it.barcode != null && it.barcode!.isNotEmpty) map['bc'] = it.barcode;
+      return map;
     }).toList();
 
     final data = {
       't': title,
-      'b': budget,
+      if (budget > 0.0) 'b': budget,
       'i': itemsMap,
       if (spreadsheetId != null && spreadsheetId.isNotEmpty) 'ss': spreadsheetId,
       'mode': 'single_list',
     };
 
     final jsonStr = jsonEncode(data);
-    final base64Str = base64UrlEncode(utf8.encode(jsonStr));
-    return 'carrin://share?d=$base64Str';
+    final utf8Bytes = utf8.encode(jsonStr);
+    final compressed = gzip.encode(utf8Bytes);
+    final base64Str = base64UrlEncode(compressed);
+    return 'carrin://share?z=$base64Str';
   }
 
   /// Codifica a lista atualmente ativa ou selecionada do provider
@@ -76,7 +78,18 @@ class SharedListService {
       String clean = rawInput.trim();
       String? encoded;
 
-      if (clean.contains('d=')) {
+      if (clean.contains('z=')) {
+        final uri = Uri.tryParse(clean);
+        if (uri != null && uri.queryParameters.containsKey('z')) {
+          encoded = uri.queryParameters['z'];
+        } else {
+          final idx = clean.indexOf('z=');
+          encoded = clean.substring(idx + 2);
+          if (encoded.contains('&')) {
+            encoded = encoded.substring(0, encoded.indexOf('&'));
+          }
+        }
+      } else if (clean.contains('d=')) {
         final uri = Uri.tryParse(clean);
         if (uri != null && uri.queryParameters.containsKey('d')) {
           encoded = uri.queryParameters['d'];
@@ -99,8 +112,12 @@ class SharedListService {
         padded += '=';
       }
 
-      final jsonBytes = base64Url.decode(padded);
-      final jsonStr = utf8.decode(jsonBytes);
+      List<int> bytes = base64Url.decode(padded);
+      // Auto-detecção de compressão GZIP (magic bytes 0x1F, 0x8B)
+      if (bytes.length >= 2 && bytes[0] == 0x1f && bytes[1] == 0x8b) {
+        bytes = gzip.decode(bytes);
+      }
+      final jsonStr = utf8.decode(bytes);
       final Map<String, dynamic> data = jsonDecode(jsonStr);
 
       final title = (data['t'] as String?) ?? 'Lista Compartilhada';
@@ -118,8 +135,8 @@ class SharedListService {
           quantity: (it['q'] as num?)?.toDouble() ?? 1.0,
           unitPrice: (it['p'] as num?)?.toDouble() ?? 0.0,
           category: (it['c'] as String?) ?? 'Outros',
-          isKg: (it['k'] as bool?) ?? false,
-          isBought: (it['b'] as bool?) ?? false,
+          isKg: it['k'] == true || it['k'] == 1,
+          isBought: it['b'] == true || it['b'] == 1,
           barcode: it['bc'] as String?,
         ));
       }

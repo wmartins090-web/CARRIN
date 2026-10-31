@@ -9,6 +9,7 @@ import 'package:nfc_manager/nfc_manager_ios.dart' as ios_nfc;
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:provider/provider.dart';
+import '../screens/barcode_scanner_screen.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../providers/item_provider.dart';
 import '../services/user_sheets_service.dart';
@@ -20,12 +21,14 @@ class SharedListPairingSheet extends StatefulWidget {
   final String listName;
   final String activeUserEmail;
   final String? initialCodeOrUri;
+  final bool defaultTransmit;
 
   const SharedListPairingSheet({
     super.key,
     required this.listName,
     required this.activeUserEmail,
     this.initialCodeOrUri,
+    this.defaultTransmit = false,
   });
 
   static Future<void> show(
@@ -33,6 +36,7 @@ class SharedListPairingSheet extends StatefulWidget {
     required String listName,
     required String activeUserEmail,
     String? initialCodeOrUri,
+    bool defaultTransmit = false,
   }) {
     return showModalBottomSheet(
       context: context,
@@ -42,6 +46,7 @@ class SharedListPairingSheet extends StatefulWidget {
         listName: listName,
         activeUserEmail: activeUserEmail,
         initialCodeOrUri: initialCodeOrUri,
+        defaultTransmit: defaultTransmit,
       ),
     );
   }
@@ -69,12 +74,14 @@ class _SharedListPairingSheetState extends State<SharedListPairingSheet>
 
   bool _isNfcAvailable = false;
   bool _isNfcActive = false;
-  String _nfcStatusText = 'Toque em Transmitir ou Ler para iniciar o NFC';
+  bool _isTransmitMode = false;
+  String _nfcStatusText = 'Modo Inteligente: Aguardando lista via NFC...';
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
+    _isTransmitMode = widget.defaultTransmit;
 
     final provider = Provider.of<ItemProvider>(context, listen: false);
     _selectedList = widget.listName;
@@ -138,12 +145,10 @@ class _SharedListPairingSheetState extends State<SharedListPairingSheet>
       final availability = await NfcManager.instance.checkAvailability();
       if (mounted) {
         final isAvail = availability == NfcAvailability.enabled;
-        final provider = Provider.of<ItemProvider>(context, listen: false);
-        final defaultReceive = provider.items.isEmpty;
         setState(() {
           _isNfcAvailable = isAvail;
           if (isAvail) {
-            _startNfcSession(isTransmitMode: !defaultReceive);
+            _startNfcSession(isTransmitMode: _isTransmitMode);
           } else {
             _nfcStatusText = 'NFC desativado ou não suportado neste aparelho';
           }
@@ -203,24 +208,25 @@ class _SharedListPairingSheetState extends State<SharedListPairingSheet>
 
     setState(() {
       _isNfcActive = true;
+      _isTransmitMode = isTransmitMode;
       _nfcStatusText = isTransmitMode
-          ? 'Transmitindo via NFC... Aproxime a traseira do outro celular ou Tag NFC'
-          : 'Modo Leitura NFC Ativo... Aproxime do celular transmissor ou Tag NFC';
+          ? '🔵 Transmitindo "$_selectedList"... Aproxime o celular receptor'
+          : '🟢 Modo Inteligente Receptor... Aguardando celular transmissor';
     });
 
     try {
       await NfcManager.instance.startSession(
         pollingOptions: {NfcPollingOption.iso14443, NfcPollingOption.iso15693},
         alertMessageIos: isTransmitMode
-            ? 'Aproxime da traseira do outro celular para transmitir a lista de compras!'
-            : 'Aproxime do outro celular para receber a lista de compras!',
+            ? 'Aproxime do celular receptor para transmitir a lista "$_selectedList"!'
+            : 'Aproxime do celular transmissor para receber a lista!',
         onDiscovered: (NfcTag tag) async {
           HapticFeedback.heavyImpact();
 
           final provider = Provider.of<ItemProvider>(context, listen: false);
 
           if (isTransmitMode) {
-            final uriToTransmit = _spreadsheetUrl ?? _carrinPayloadUri;
+            final uriToTransmit = _carrinPayloadUri;
             final record = NdefRecord(
               typeNameFormat: TypeNameFormat.wellKnown,
               type: Uint8List.fromList([0x55]), // 'U'
@@ -848,77 +854,170 @@ class _SharedListPairingSheetState extends State<SharedListPairingSheet>
 
   // 1. ABA NFC
   Widget _buildNfcTab(Color primary) {
+    final isListening = !_isTransmitMode;
+    final accentColor = isListening ? Colors.green : Colors.blue;
+
     return SingleChildScrollView(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          const SizedBox(height: 6),
+          const SizedBox(height: 8),
+
+          // Seletor Inteligente de Papel: Receptor vs Transmissor
+          Container(
+            padding: const EdgeInsets.all(4),
+            decoration: BoxDecoration(
+              color: Colors.grey.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(24),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                InkWell(
+                  onTap: () {
+                    setState(() => _isTransmitMode = false);
+                    _startNfcSession(isTransmitMode: false);
+                  },
+                  borderRadius: BorderRadius.circular(20),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: isListening ? Colors.green : Colors.transparent,
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.download_rounded, size: 16, color: isListening ? Colors.white : Colors.grey[700]),
+                        const SizedBox(width: 6),
+                        Text(
+                          '📥 Receber Lista',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: isListening ? Colors.white : Colors.grey[700],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                InkWell(
+                  onTap: () {
+                    setState(() => _isTransmitMode = true);
+                    _startNfcSession(isTransmitMode: true);
+                  },
+                  borderRadius: BorderRadius.circular(20),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: !isListening ? Colors.blue[700] : Colors.transparent,
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.upload_rounded, size: 16, color: !isListening ? Colors.white : Colors.grey[700]),
+                        const SizedBox(width: 6),
+                        Text(
+                          '📤 Transmitir Lista',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: !isListening ? Colors.white : Colors.grey[700],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 16),
+
+          // Radar animado
           Stack(
             alignment: Alignment.center,
             children: [
               Container(
-                width: 120,
-                height: 120,
+                width: 125,
+                height: 125,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: primary.withValues(alpha: 0.1),
+                  color: accentColor.withValues(alpha: 0.08),
                 ),
               ),
               Container(
-                width: 90,
-                height: 90,
+                width: 95,
+                height: 95,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: primary.withValues(alpha: 0.2),
+                  color: accentColor.withValues(alpha: 0.18),
                 ),
               ),
               Icon(
-                Icons.nfc_rounded,
-                size: 54,
-                color: _isNfcActive ? Colors.green : (_isNfcAvailable ? primary : Colors.grey),
+                isListening ? Icons.sensors_rounded : Icons.tap_and_play_rounded,
+                size: 52,
+                color: (_isNfcAvailable && _isNfcActive) ? accentColor : Colors.grey,
               ),
             ],
           ),
+
           const SizedBox(height: 14),
+
           Text(
-            _isNfcAvailable
-                ? (_isNfcActive ? 'NFC Ativo e Transmitindo!' : 'NFC Pronto para Aproximação')
-                : 'NFC Desativado no Aparelho',
+            !_isNfcAvailable
+                ? 'NFC Desativado no Aparelho'
+                : (isListening
+                    ? '🟢 Modo Inteligente: Pronto para Receber'
+                    : '🔵 Transmitindo: "$_selectedList"'),
             style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+            textAlign: TextAlign.center,
           ),
           const SizedBox(height: 6),
+
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
+            padding: const EdgeInsets.symmetric(horizontal: 20),
             child: Text(
-              _nfcStatusText,
+              !_isNfcAvailable
+                  ? 'Ative o NFC nas configurações do seu celular para usar esta função.'
+                  : _nfcStatusText,
               textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 12, color: Colors.grey),
+              style: const TextStyle(fontSize: 11.5, color: Colors.grey),
             ),
           ),
+
           const SizedBox(height: 16),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              FilledButton.icon(
-                style: FilledButton.styleFrom(
-                  backgroundColor: Colors.blue[700],
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                ),
-                onPressed: _isNfcAvailable ? () => _startNfcSession(isTransmitMode: true) : null,
-                icon: const Icon(Icons.tap_and_play_rounded, size: 18),
-                label: const Text('Transmitir por NFC'),
+
+          if (isListening)
+            OutlinedButton.icon(
+              style: OutlinedButton.styleFrom(
+                foregroundColor: Colors.green[800],
+                side: BorderSide(color: Colors.green[700]!),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               ),
-              const SizedBox(width: 8),
-              OutlinedButton.icon(
-                style: OutlinedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                ),
-                onPressed: _isNfcAvailable ? () => _startNfcSession(isTransmitMode: false) : null,
-                icon: const Icon(Icons.sensors_rounded, size: 18),
-                label: const Text('Receber por NFC'),
+              onPressed: () {
+                Navigator.pop(context);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (ctx) => const BarcodeScannerScreen()),
+                );
+              },
+              icon: const Icon(Icons.qr_code_scanner_rounded, size: 16),
+              label: const Text('Ou Ler QR Code com a Câmera', style: TextStyle(fontSize: 12)),
+            )
+          else
+            FilledButton.icon(
+              style: FilledButton.styleFrom(
+                backgroundColor: Colors.blue[700],
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               ),
-            ],
-          ),
+              onPressed: () => _tabController.animateTo(1),
+              icon: const Icon(Icons.qr_code_rounded, size: 16),
+              label: const Text('Exibir QR Code Desta Lista', style: TextStyle(fontSize: 12)),
+            ),
         ],
       ),
     );
@@ -926,6 +1025,8 @@ class _SharedListPairingSheetState extends State<SharedListPairingSheet>
 
   // 2. ABA QR CODE
   Widget _buildQrTab(String qrData) {
+    final effectiveData = qrData.isNotEmpty ? qrData : _carrinPayloadUri;
+
     return SingleChildScrollView(
       child: Column(
         children: [
@@ -950,44 +1051,88 @@ class _SharedListPairingSheetState extends State<SharedListPairingSheet>
 
           // Imagem do QR Code
           Container(
-            padding: const EdgeInsets.all(10),
+            padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
               color: Colors.white,
               borderRadius: BorderRadius.circular(16),
               boxShadow: [
-                BoxShadow(color: Colors.black.withValues(alpha: 0.1), blurRadius: 6),
+                BoxShadow(color: Colors.black.withValues(alpha: 0.12), blurRadius: 8),
               ],
             ),
-            child: QrImageView(
-              data: qrData,
-              version: QrVersions.auto,
-              size: 175.0,
-            ),
+            child: effectiveData.isNotEmpty
+                ? QrImageView(
+                    data: effectiveData,
+                    version: QrVersions.auto,
+                    errorCorrectionLevel: QrErrorCorrectLevel.M,
+                    size: 180.0,
+                    gapless: true,
+                    errorStateBuilder: (cxt, err) {
+                      return SizedBox(
+                        width: 180,
+                        height: 180,
+                        child: Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              const Icon(Icons.qr_code_2_rounded, size: 36, color: Colors.grey),
+                              const SizedBox(height: 6),
+                              Text('Atualizando QR Code...', style: TextStyle(fontSize: 11, color: Colors.grey[600])),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  )
+                : const SizedBox(
+                    width: 180,
+                    height: 180,
+                    child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+                  ),
           ),
           const SizedBox(height: 10),
 
           Text(
             _qrForCarrinApp
-                ? 'Aponte a câmera do outro celular com CARRIN para carregar a lista na hora'
+                ? 'Aponte a câmera do celular com CARRIN para carregar a lista na hora'
                 : 'Aponte a câmera do iPhone para abrir no Google Planilhas / Safari',
             textAlign: TextAlign.center,
             style: const TextStyle(fontSize: 11.5, color: Colors.grey),
           ),
           const SizedBox(height: 10),
 
-          FilledButton.icon(
-            style: FilledButton.styleFrom(
-              backgroundColor: Colors.green[700],
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            ),
-            onPressed: () {
-              Clipboard.setData(ClipboardData(text: qrData));
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Link copiado para a área de transferência!'), backgroundColor: Colors.green),
-              );
-            },
-            icon: const Icon(Icons.copy_rounded, size: 16),
-            label: const Text('Copiar Link', style: TextStyle(fontSize: 12)),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              FilledButton.icon(
+                style: FilledButton.styleFrom(
+                  backgroundColor: Colors.green[700],
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                ),
+                onPressed: () {
+                  Clipboard.setData(ClipboardData(text: effectiveData));
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Link copiado para a área de transferência!'), backgroundColor: Colors.green),
+                  );
+                },
+                icon: const Icon(Icons.copy_rounded, size: 16),
+                label: const Text('Copiar Link', style: TextStyle(fontSize: 12)),
+              ),
+              const SizedBox(width: 8),
+              OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                ),
+                onPressed: () {
+                  Navigator.pop(context);
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (ctx) => const BarcodeScannerScreen()),
+                  );
+                },
+                icon: const Icon(Icons.qr_code_scanner_rounded, size: 16),
+                label: const Text('Ler QR Code', style: TextStyle(fontSize: 12)),
+              ),
+            ],
           ),
         ],
       ),
