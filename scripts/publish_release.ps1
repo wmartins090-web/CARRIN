@@ -125,7 +125,8 @@ Write-Output "`nDisparando notificacao push FCM para todos os usuarios instalado
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $fcmScript = Join-Path $scriptDir "send_fcm_notification.py"
 if (Test-Path $fcmScript) {
-    & python $fcmScript -v "$tag" -b "$releaseNotes"
+    $env:PYTHONUTF8 = "1"
+    & python -X utf8 $fcmScript -v "$tag" -b "$releaseNotes"
 } else {
     Write-Warning "Script send_fcm_notification.py nao encontrado em $fcmScript"
 }

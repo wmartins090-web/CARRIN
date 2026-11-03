@@ -1029,6 +1029,16 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> with SingleTick
                       _openPairingSheet(defaultTransmit: false);
                       return;
                     }
+                    if (result == '__ACTION_OPEN_RECEIPT__') {
+                      if (!context.mounted) return;
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const ReceiptScannerScreen(),
+                        ),
+                      );
+                      return;
+                    }
                     final trimmed = result.trim();
                     if (trimmed.isEmpty) return;
 
@@ -1068,10 +1078,20 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> with SingleTick
                     }
 
                     // Padrão B: Cupom Fiscal Eletrônico NFC-e / Danfe
-                    final isReceipt = trimmed.contains('sefaz') ||
-                        trimmed.contains('fazenda') ||
+                    final lowerTrimmed = trimmed.toLowerCase();
+                    final isReceipt = lowerTrimmed.contains('sefaz') ||
+                        lowerTrimmed.contains('fazenda') ||
+                        lowerTrimmed.contains('sefin') ||
+                        lowerTrimmed.contains('sefa.') ||
+                        lowerTrimmed.contains('nfce') ||
+                        lowerTrimmed.contains('danfe') ||
+                        lowerTrimmed.contains('receita') ||
+                        lowerTrimmed.contains('chnfe') ||
+                        lowerTrimmed.contains('portalnfce') ||
+                        lowerTrimmed.contains('/qrcode?p=') ||
+                        lowerTrimmed.contains('?p=') ||
                         RegExp(r'[?&]p=[0-9]{44}').hasMatch(trimmed) ||
-                        (RegExp(r'^[0-9]{44}$').hasMatch(trimmed));
+                        RegExp(r'^[0-9]{44}$').hasMatch(trimmed);
                     if (isReceipt) {
                       if (!context.mounted) return;
                       _handleScannedReceiptQr(context, trimmed, itemProvider);
@@ -2034,6 +2054,31 @@ if (_isMarketLocked)
                           if (!context.mounted) return;
                           final result = await Navigator.push<String>(context, MaterialPageRoute(builder: (_) => const BarcodeScannerScreen()));
                           if (result != null) {
+                            if (result == '__ACTION_OPEN_RECEIPT__') {
+                              Navigator.pop(dialogContext);
+                              Navigator.push(context, MaterialPageRoute(builder: (_) => const ReceiptScannerScreen()));
+                              return;
+                            }
+                            final trimmedResult = result.trim();
+                            final lowerRes = trimmedResult.toLowerCase();
+                            final isRec = lowerRes.contains('sefaz') ||
+                                lowerRes.contains('fazenda') ||
+                                lowerRes.contains('sefin') ||
+                                lowerRes.contains('sefa.') ||
+                                lowerRes.contains('nfce') ||
+                                lowerRes.contains('danfe') ||
+                                lowerRes.contains('receita') ||
+                                lowerRes.contains('chnfe') ||
+                                lowerRes.contains('portalnfce') ||
+                                lowerRes.contains('/qrcode?p=') ||
+                                lowerRes.contains('?p=') ||
+                                RegExp(r'[?&]p=[0-9]{44}').hasMatch(trimmedResult) ||
+                                RegExp(r'^[0-9]{44}$').hasMatch(trimmedResult);
+                            if (isRec) {
+                              Navigator.pop(dialogContext);
+                              _handleScannedReceiptQr(context, trimmedResult, prov);
+                              return;
+                            }
                             final cleanBc = Item.parseBarcode(result) ?? result.trim();
                             final scaleInfo = BarcodeLookupService.instance.parseScaleBarcode(cleanBc);
                             final searchBc = scaleInfo != null ? scaleInfo.baseCode : cleanBc;
@@ -2454,45 +2499,18 @@ if (_isMarketLocked)
   }
 
   void _handleScannedReceiptQr(BuildContext context, String rawUrlOrKey, ItemProvider itemProvider) {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        title: const Row(
-          children: [
-            Icon(Icons.receipt_long_rounded, color: Colors.teal),
-            SizedBox(width: 10),
-            Text('Nota Fiscal NFC-e', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-          ],
-        ),
-        content: const Text(
-          'A câmera identificou um Cupom Fiscal Eletrônico (NFC-e).\n\nDeseja abrir a tela de importação e conferência de notas fiscais?',
-          style: TextStyle(fontSize: 14),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancelar', style: TextStyle(color: Colors.grey)),
-          ),
-          ElevatedButton.icon(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.teal,
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            ),
-            onPressed: () {
-              Navigator.pop(ctx);
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => const ReceiptScannerScreen(),
-                ),
-              );
-            },
-            icon: const Icon(Icons.arrow_forward_rounded, size: 18),
-            label: const Text('Abrir Cupom'),
-          ),
-        ],
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('🧾 Cupom Fiscal detectado! Abrindo conferência e carregando produtos...'),
+        backgroundColor: Colors.teal,
+        duration: Duration(seconds: 3),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ReceiptScannerScreen(initialQrUrl: rawUrlOrKey),
       ),
     );
   }

@@ -437,10 +437,13 @@ class _MarketMapScreenState extends State<MarketMapScreen> with TickerProviderSt
 
   Future<void> _refreshPriceOverlays() async {
     final query = _searchQuery.trim().toLowerCase();
-    final itemProvider = Provider.of<ItemProvider>(context, listen: false);
+    ItemProvider? itemProvider;
+    try {
+      itemProvider = Provider.of<ItemProvider>(context, listen: false);
+    } catch (_) {}
 
     // 1. Se estiver no modo Comparar Carrinho
-    if (_compareCartMode && itemProvider.items.isNotEmpty) {
+    if (_compareCartMode && itemProvider != null && itemProvider.items.isNotEmpty) {
       final names = itemProvider.items.map((it) => it.name).toList();
       final estimates = await CommunityPriceService.instance.compareMarketBaskets(
         itemNames: names,
@@ -2508,8 +2511,11 @@ class _MarketMapScreenState extends State<MarketMapScreen> with TickerProviderSt
                       children: [
                         // 🛒 Mapew Super Feature: Botão de Cesta Completa / Meu Carrinho no Mapa
                         Builder(builder: (ctx) {
-                          final itemProvider = Provider.of<ItemProvider>(context, listen: false);
-                          final cartCount = itemProvider.items.length;
+                          ItemProvider? itemProvider;
+                          try {
+                            itemProvider = Provider.of<ItemProvider>(ctx, listen: false);
+                          } catch (_) {}
+                          final cartCount = itemProvider?.items.length ?? 0;
 
                           return Padding(
                             padding: const EdgeInsets.only(right: 6),

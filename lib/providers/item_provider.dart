@@ -993,7 +993,7 @@ class ItemProvider with ChangeNotifier {
   }
 
   /// Retorna as listas de carrinhos na ordem de criação decrescente (mais recentes criadas no topo).
-  List<String> get sortedMonthsDescending => _months;
+  List<String> get sortedMonthsDescending => _months.reversed.toList();
 
   /// Retorna as listas de carrinhos na ordem de criação crescente (mais antigas criadas no topo).
   List<String> get sortedMonthsAscending => List<String>.from(_months);

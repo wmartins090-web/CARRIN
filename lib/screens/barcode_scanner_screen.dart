@@ -247,7 +247,7 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen>
                       borderRadius: BorderRadius.circular(20),
                     ),
                     child: const Text(
-                      'Aponte para o código de barras ou QR Code',
+                      'Aponte para o código de barras ou QR Code de cupom',
                       style: TextStyle(
                         color: Colors.white,
                         fontSize: 13,
@@ -260,43 +260,64 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen>
 
               // Botões inferiores limpos
               Positioned(
-                bottom: 40,
-                left: 24,
-                right: 24,
+                bottom: 36,
+                left: 16,
+                right: 16,
                 child: Center(
-                  child: Wrap(
-                    alignment: WrapAlignment.center,
-                    spacing: 12,
-                    children: [
-                      TextButton.icon(
-                        style: TextButton.styleFrom(
-                          backgroundColor: Colors.white.withValues(alpha: 0.16),
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        TextButton.icon(
+                          style: TextButton.styleFrom(
+                            backgroundColor: Colors.white.withValues(alpha: 0.16),
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+                          ),
+                          onPressed: _showManualInputDialog,
+                          icon: const Icon(Icons.keyboard_outlined, size: 18),
+                          label: const Text(
+                            'Digitar código',
+                            style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
+                          ),
                         ),
-                        onPressed: _showManualInputDialog,
-                        icon: const Icon(Icons.keyboard_outlined, size: 18),
-                        label: const Text(
-                          'Digitar código',
-                          style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                        const SizedBox(width: 8),
+                        TextButton.icon(
+                          style: TextButton.styleFrom(
+                            backgroundColor: Colors.tealAccent.withValues(alpha: 0.20),
+                            foregroundColor: Colors.tealAccent.shade100,
+                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(24),
+                              side: BorderSide(color: Colors.tealAccent.withValues(alpha: 0.35)),
+                            ),
+                          ),
+                          onPressed: () => Navigator.pop(context, '__ACTION_OPEN_RECEIPT__'),
+                          icon: const Icon(Icons.receipt_long_rounded, size: 18, color: Colors.tealAccent),
+                          label: const Text(
+                            'Cupom Fiscal',
+                            style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
+                          ),
                         ),
-                      ),
-                      TextButton.icon(
-                        style: TextButton.styleFrom(
-                          backgroundColor: Colors.white.withValues(alpha: 0.16),
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+                        const SizedBox(width: 8),
+                        TextButton.icon(
+                          style: TextButton.styleFrom(
+                            backgroundColor: Colors.white.withValues(alpha: 0.16),
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+                          ),
+                          onPressed: () => Navigator.pop(context, '__ACTION_OPEN_NFC__'),
+                          icon: const Icon(Icons.nfc_rounded, size: 18, color: Colors.lightBlueAccent),
+                          label: const Text(
+                            'NFC',
+                            style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
+                          ),
                         ),
-                        onPressed: () => Navigator.pop(context, '__ACTION_OPEN_NFC__'),
-                        icon: const Icon(Icons.nfc_rounded, size: 18, color: Colors.lightBlueAccent),
-                        label: const Text(
-                          'NFC',
-                          style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
-                        ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -358,19 +379,21 @@ class _ScannerOverlayPainter extends CustomPainter {
       ..lineTo(scanWindow.right, scanWindow.top + cornerLength);
     canvas.drawPath(trPath, borderPaint);
 
-    // Canto inferior esquerdo
+    // Canto inferior esquerdo (clockwise: false para curvar para fora acompanhando o RRect)
     final blPath = Path()
       ..moveTo(scanWindow.left, scanWindow.bottom - cornerLength)
       ..lineTo(scanWindow.left, scanWindow.bottom - r)
-      ..arcToPoint(Offset(scanWindow.left + r, scanWindow.bottom), radius: Radius.circular(r))
+      ..arcToPoint(Offset(scanWindow.left + r, scanWindow.bottom),
+          radius: Radius.circular(r), clockwise: false)
       ..lineTo(scanWindow.left + cornerLength, scanWindow.bottom);
     canvas.drawPath(blPath, borderPaint);
 
-    // Canto inferior direito
+    // Canto inferior direito (clockwise: false para curvar para fora acompanhando o RRect)
     final brPath = Path()
       ..moveTo(scanWindow.right - cornerLength, scanWindow.bottom)
       ..lineTo(scanWindow.right - r, scanWindow.bottom)
-      ..arcToPoint(Offset(scanWindow.right, scanWindow.bottom - r), radius: Radius.circular(r))
+      ..arcToPoint(Offset(scanWindow.right, scanWindow.bottom - r),
+          radius: Radius.circular(r), clockwise: false)
       ..lineTo(scanWindow.right, scanWindow.bottom - cornerLength);
     canvas.drawPath(brPath, borderPaint);
   }

@@ -1361,7 +1361,7 @@ void main() {
       provider.setMonthsForTesting(testOrder);
 
       expect(provider.months, equals(testOrder));
-      expect(provider.sortedMonthsDescending, equals(testOrder));
+      expect(provider.sortedMonthsDescending, equals(testOrder.reversed.toList()));
       expect(provider.sortedMonthsAscending, equals(testOrder));
     });
 
@@ -1375,7 +1375,7 @@ void main() {
       provider.setMonthsForTesting(customLists);
 
       expect(provider.months, equals(customLists));
-      expect(provider.sortedMonthsDescending, equals(customLists));
+      expect(provider.sortedMonthsDescending, equals(customLists.reversed.toList()));
       expect(provider.sortedMonthsAscending, equals(customLists));
     });
   });

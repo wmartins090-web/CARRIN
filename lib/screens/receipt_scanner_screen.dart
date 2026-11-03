@@ -14,11 +14,13 @@ import 'barcode_scanner_screen.dart';
 class ReceiptScannerScreen extends StatefulWidget {
   final List<Item>? cartItemsToCompare;
   final bool isVerificationMode;
+  final String? initialQrUrl;
 
   const ReceiptScannerScreen({
     super.key,
     this.cartItemsToCompare,
     this.isVerificationMode = false,
+    this.initialQrUrl,
   });
 
   @override
@@ -36,6 +38,16 @@ class _ReceiptScannerScreenState extends State<ReceiptScannerScreen> {
   String? _nfcKey;
   String? _uf;
   String _statusMessage = 'Tire uma foto, escolha da galeria ou escaneie o QR Code NFC-e.';
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.initialQrUrl != null && widget.initialQrUrl!.isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        processNfcQrUrl(widget.initialQrUrl!);
+      });
+    }
+  }
 
   @override
   void dispose() {
@@ -91,7 +103,10 @@ class _ReceiptScannerScreenState extends State<ReceiptScannerScreen> {
     );
 
     if (scanned == null || scanned.isEmpty) return;
+    await processNfcQrUrl(scanned);
+  }
 
+  Future<void> processNfcQrUrl(String scanned) async {
     final initial = ReceiptParser.parseNfcUrl(scanned);
     if (initial.nfcKey == null && !scanned.startsWith('http')) {
       if (mounted) {

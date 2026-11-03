@@ -59,7 +59,7 @@ def send_fcm_notification(version, title, body, build_number=None, topic="novas_
     clean_version = version.lstrip('v')
     b_num = str(build_number) if build_number else clean_version.replace('.', '')
 
-    notification_title = title or f"🚀 Nova versão do CARRIN ({version})!"
+    notification_title = title or f"Nova versão do CARRIN ({version})"
     notification_body = body or "Uma nova atualização está pronta para você. Toque para baixar agora!"
 
     payload = {
