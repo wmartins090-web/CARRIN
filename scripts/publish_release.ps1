@@ -1,8 +1,8 @@
 param (
-    [string]$tag = "v1.3.583",
-    [string]$apkPath = "C:\dev\CARRIN\build\app\outputs\flutter-apk\carrin_v1.3.583.apk",
-    [string]$releaseTitle = "CARRIN v1.3.583",
-    [string]$releaseNotes = "Mapa em tempo real (pulso azul, bússola, modo seguir e distâncias dinâmicas) e instalador resiliente com validação EOCD."
+    [string]$tag = "v1.3.610",
+    [string]$apkPath = "C:\dev\CARRIN\build\app\outputs\flutter-apk\carrin_v1.3.610.apk",
+    [string]$releaseTitle = "CARRIN v1.3.610",
+    [string]$releaseNotes = "Notificações push em tempo real com app fechado via Firebase e download/instalação direta."
 )
 
 Add-Type -TypeDefinition @"
@@ -119,3 +119,13 @@ Start-Sleep -Seconds 4
 
 $check = & curl.exe -L -I -s "https://github.com/$repo/releases/download/$tag/$assetName" | Select-String "HTTP/|Content-Type|Content-Length"
 Write-Output $check
+
+# Disparo automatico de Notificacao Push via Firebase FCM
+Write-Output "`nDisparando notificacao push FCM para todos os usuarios instalados..."
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$fcmScript = Join-Path $scriptDir "send_fcm_notification.py"
+if (Test-Path $fcmScript) {
+    & python $fcmScript -v "$tag" -t "🚀 Nova versao do CARRIN ($tag)!" -b "$releaseNotes"
+} else {
+    Write-Warning "Script send_fcm_notification.py nao encontrado em $fcmScript"
+}
