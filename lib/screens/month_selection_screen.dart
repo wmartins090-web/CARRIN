@@ -23,7 +23,6 @@ class _MonthSelectionScreenState extends State<MonthSelectionScreen> with Automa
   String? _openingMonth;
   
   bool _shouldShowContent = false;
-  bool _isDescending = true;
 
   @override
   bool get wantKeepAlive => true;
@@ -31,25 +30,7 @@ class _MonthSelectionScreenState extends State<MonthSelectionScreen> with Automa
   @override
   void initState() {
     super.initState();
-    _loadSortPreference();
     _loadData();
-  }
-
-  Future<void> _loadSortPreference() async {
-    final prefs = await SharedPreferences.getInstance();
-    if (mounted) {
-      setState(() {
-        _isDescending = prefs.getBool('month_sort_descending') ?? true;
-      });
-    }
-  }
-
-  Future<void> _toggleSort() async {
-    setState(() {
-      _isDescending = !_isDescending;
-    });
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('month_sort_descending', _isDescending);
   }
 
   Future<void> _loadData() async {
