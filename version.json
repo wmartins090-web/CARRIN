@@ -1,16 +1,16 @@
 {
-  "version": "1.3.615",
-  "build_number": 615,
+  "version": "1.3.616",
+  "build_number": 616,
   "release_date": "2026-11-03",
-  "title": "CARRIN v1.3.615",
+  "title": "CARRIN v1.3.616",
   "release_notes": [
+    "Animação em cascata ativada na lista de produtos do carrinho ao entrar, ordenar ou filtrar",
     "Animações reativas: listas animam ao trocar de aba e ao inverter a ordem dos carrinhos",
-    "Cascata animada de Meus Carrinhos e Estatísticas ativada em cada visita",
     "Retículo da câmera com cantoneiras curvas perfeitas para fora",
-    "Escaneamento de Cupom Fiscal NFC-e direto pela câmera de produtos com carga automática"
+    "Escaneamento de Cupom Fiscal NFC-e direto pela câmera de produtos"
   ],
-  "apk_url": "https://github.com/wmartins090-web/CARRIN/releases/download/v1.3.615/carrin_v1.3.615.apk",
-  "size_bytes": 121333238,
+  "apk_url": "https://github.com/wmartins090-web/CARRIN/releases/download/v1.3.616/carrin_v1.3.616.apk",
+  "size_bytes": 121333234,
   "is_active": true,
   "force_update": false
 }

@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
 import '../services/shared_list_service.dart';
 import '../services/user_sheets_service.dart';
 import 'package:flutter/foundation.dart';
@@ -548,7 +549,9 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> with SingleTick
                   },
                   child: AbsorbPointer(
                     absorbing: showLoader,
-                    child: CustomScrollView(
+                    child: AnimationLimiter(
+                      key: _limiterKey,
+                      child: CustomScrollView(
                         physics: const BouncingScrollPhysics(parent: AlwaysScrollableScrollPhysics()),
                         cacheExtent: 200, 
                         slivers: [
@@ -876,18 +879,27 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> with SingleTick
                             SliverPadding(
                               padding: const EdgeInsets.only(bottom: 120),
                               sliver: SliverList(
-                                key: _limiterKey,
                                 delegate: SliverChildBuilderDelegate(
                                   (context, index) {
                                     if (index >= flatList.length) return null;
                                     final element = flatList[index];
 
-                                    if (element is String) {
-                                      final categoryItems = groupedItems[element]!;
-                                      return _buildCategoryHeader(context, element, categoryItems.length);
-                                    } else {
-                                      return _buildItemTile(element as Item, itemProvider);
-                                    }
+                                    final Widget childWidget = (element is String)
+                                        ? _buildCategoryHeader(context, element, groupedItems[element]!.length)
+                                        : _buildItemTile(element as Item, itemProvider);
+
+                                    final bool useAnimations = itemProvider.animationSettings['list_animations'] ?? true;
+                                    if (!useAnimations) return childWidget;
+
+                                    return AnimationConfiguration.staggeredList(
+                                      position: index,
+                                      duration: const Duration(milliseconds: 320),
+                                      delay: const Duration(milliseconds: 25),
+                                      child: SlideAnimation(
+                                        verticalOffset: 20.0,
+                                        child: FadeInAnimation(child: childWidget),
+                                      ),
+                                    );
                                   },
                                   childCount: flatList.length,
                                 ),
@@ -895,6 +907,7 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> with SingleTick
                             ),
                         ],
                       ),
+                    ),
                   ),
                 ),
                 if (showLoader)
