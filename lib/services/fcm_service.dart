@@ -14,10 +14,16 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
     WidgetsFlutterBinding.ensureInitialized();
     await Firebase.initializeApp();
 
-    final data = message.data;
     final notification = message.notification;
+    // Se a notificação já foi exibida nativamente pelo Android (payload 'notification' presente),
+    // NÃO duplicamos chamando showUpdateAvailable novamente!
+    if (notification != null) {
+      debugPrint('FCM: Notificação nativa já exibida pelo Android. Ignorando duplicação.');
+      return;
+    }
 
-    final title = notification?.title ?? data['title'] ?? '🚀 Atualização do CARRIN';
+    final data = message.data;
+    final title = data['title'] ?? '🚀 Atualização do CARRIN';
     final version = data['version'] ?? AppUpdateService.currentAppVersion;
     final buildNumber = int.tryParse(data['build_number']?.toString() ?? '') ??
         AppUpdateService.currentBuildNumber + 1;
