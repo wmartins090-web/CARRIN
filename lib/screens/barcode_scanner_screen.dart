@@ -128,10 +128,6 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen>
 
   @override
   Widget build(BuildContext context) {
-    final screenWidth = MediaQuery.of(context).size.width;
-    final boxWidth = (screenWidth * 0.82).clamp(260.0, 320.0);
-    final boxHeight = boxWidth * 0.72; // Proporção horizontal ideal para 1D e 2D
-
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
@@ -184,209 +180,199 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen>
           ),
         ],
       ),
-      body: Stack(
-        children: [
-          // Leitor de Câmera Universal
-          MobileScanner(
-            controller: controller,
-            onDetect: _onDetect,
-          ),
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          final boxWidth = (constraints.maxWidth * 0.78).clamp(240.0, 310.0);
+          final boxHeight = boxWidth * 0.68;
+          final scanWindow = Rect.fromCenter(
+            center: Offset(constraints.maxWidth / 2, constraints.maxHeight * 0.44),
+            width: boxWidth,
+            height: boxHeight,
+          );
 
-          // Overlay Escurecido com Mira Central
-          Center(
-            child: Container(
-              width: boxWidth,
-              height: boxHeight,
-              decoration: BoxDecoration(
-                border: Border.all(color: Colors.white.withValues(alpha: 0.4), width: 1.5),
-                borderRadius: BorderRadius.circular(18),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.35),
-                    spreadRadius: 2000,
-                  ),
-                ],
+          return Stack(
+            fit: StackFit.expand,
+            children: [
+              // Leitor de Câmera Universal
+              MobileScanner(
+                controller: controller,
+                scanWindow: scanWindow,
+                onDetect: _onDetect,
               ),
-              child: Stack(
-                children: [
-                  // Cantoneiras estilizadas
-                  Positioned(top: 0, left: 0, child: _corner(0)),
-                  Positioned(top: 0, right: 0, child: _corner(1)),
-                  Positioned(bottom: 0, left: 0, child: _corner(2)),
-                  Positioned(bottom: 0, right: 0, child: _corner(3)),
 
-                  // Linha Laser Animada de Leitura
-                  AnimatedBuilder(
-                    animation: _animation,
-                    builder: (context, child) {
-                      return Positioned(
-                        top: boxHeight * _animation.value,
-                        left: 12,
-                        right: 12,
-                        child: Container(
-                          height: 2.5,
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              colors: [
-                                Colors.redAccent.withValues(alpha: 0.0),
-                                Colors.redAccent,
-                                Colors.amberAccent,
-                                Colors.redAccent,
-                                Colors.redAccent.withValues(alpha: 0.0),
-                              ],
-                            ),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.redAccent.withValues(alpha: 0.8),
-                                blurRadius: 8,
-                                spreadRadius: 1.5,
-                              ),
-                            ],
-                          ),
+              // Overlay limpo com corte central e cantoneiras elegantes
+              CustomPaint(
+                painter: _ScannerOverlayPainter(
+                  scanWindow: scanWindow,
+                  borderRadius: 18,
+                ),
+              ),
+
+              // Linha Laser Animada de Leitura
+              AnimatedBuilder(
+                animation: _animation,
+                builder: (context, child) {
+                  return Positioned(
+                    top: scanWindow.top + (scanWindow.height * _animation.value),
+                    left: scanWindow.left + 14,
+                    width: scanWindow.width - 28,
+                    child: Container(
+                      height: 2,
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: [
+                            Colors.greenAccent.withValues(alpha: 0.0),
+                            Colors.greenAccent,
+                            Colors.white,
+                            Colors.greenAccent,
+                            Colors.greenAccent.withValues(alpha: 0.0),
+                          ],
                         ),
-                      );
-                    },
-                  ),
-                ],
-              ),
-            ),
-          ),
-
-          // Banner de Padrões Reconhecidos
-          Positioned(
-            top: 16,
-            left: 16,
-            right: 16,
-            child: Center(
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                decoration: BoxDecoration(
-                  color: Colors.black.withValues(alpha: 0.65),
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: Colors.white.withValues(alpha: 0.15)),
-                ),
-                child: const Wrap(
-                  alignment: WrapAlignment.center,
-                  spacing: 6,
-                  runSpacing: 4,
-                  children: [
-                    _BadgeChip(label: 'EAN-13'),
-                    _BadgeChip(label: 'EAN-8'),
-                    _BadgeChip(label: 'Code 128'),
-                    _BadgeChip(label: 'Balança'),
-                    _BadgeChip(label: 'QR Code'),
-                    _BadgeChip(label: 'Data Matrix'),
-                  ],
-                ),
-              ),
-            ),
-          ),
-
-          // Instrução e Botão de Digitação Manual
-          Positioned(
-            bottom: 30,
-            left: 20,
-            right: 20,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: Colors.black.withValues(alpha: 0.65),
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  child: const Text(
-                    'Aponte para código de barras, etiqueta de balança ou QR Code',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.greenAccent.withValues(alpha: 0.6),
+                            blurRadius: 6,
+                          ),
+                        ],
+                      ),
                     ),
+                  );
+                },
+              ),
+
+              // Instrução minimalista e limpa
+              Positioned(
+                top: scanWindow.bottom + 20,
+                left: 20,
+                right: 20,
+                child: const Text(
+                  'Aponte para o código de barras ou QR Code',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w500,
+                    letterSpacing: 0.2,
                   ),
                 ),
-                const SizedBox(height: 12),
-                Wrap(
-                  alignment: WrapAlignment.center,
-                  spacing: 10,
-                  runSpacing: 8,
+              ),
+
+              // Botões inferiores limpos
+              Positioned(
+                bottom: 34,
+                left: 20,
+                right: 20,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     TextButton.icon(
                       style: TextButton.styleFrom(
-                        backgroundColor: Colors.white.withValues(alpha: 0.2),
+                        backgroundColor: Colors.white.withValues(alpha: 0.18),
                         foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
                       ),
                       onPressed: _showManualInputDialog,
-                      icon: const Icon(Icons.keyboard_outlined, size: 16),
+                      icon: const Icon(Icons.keyboard_outlined, size: 18),
                       label: const Text(
                         'Digitar código',
-                        style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold),
+                        style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
                       ),
                     ),
-                    FilledButton.icon(
-                      style: FilledButton.styleFrom(
-                        backgroundColor: Colors.blueAccent.withValues(alpha: 0.9),
+                    const SizedBox(width: 12),
+                    TextButton.icon(
+                      style: TextButton.styleFrom(
+                        backgroundColor: Colors.white.withValues(alpha: 0.18),
                         foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
                       ),
                       onPressed: () => Navigator.pop(context, '__ACTION_OPEN_NFC__'),
-                      icon: const Icon(Icons.nfc_rounded, size: 16),
+                      icon: const Icon(Icons.nfc_rounded, size: 18, color: Colors.lightBlueAccent),
                       label: const Text(
-                        'Receber por NFC',
-                        style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold),
+                        'NFC',
+                        style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
                       ),
                     ),
                   ],
                 ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _corner(int index) {
-    return Container(
-      width: 28,
-      height: 28,
-      decoration: BoxDecoration(
-        border: Border(
-          top: (index == 0 || index == 1) ? const BorderSide(color: Colors.white, width: 3.5) : BorderSide.none,
-          bottom: (index == 2 || index == 3) ? const BorderSide(color: Colors.white, width: 3.5) : BorderSide.none,
-          left: (index == 0 || index == 2) ? const BorderSide(color: Colors.white, width: 3.5) : BorderSide.none,
-          right: (index == 1 || index == 3) ? const BorderSide(color: Colors.white, width: 3.5) : BorderSide.none,
-        ),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
 }
 
-class _BadgeChip extends StatelessWidget {
-  final String label;
-  const _BadgeChip({required this.label});
+class _ScannerOverlayPainter extends CustomPainter {
+  final Rect scanWindow;
+  final double borderRadius;
+
+  _ScannerOverlayPainter({required this.scanWindow, this.borderRadius = 18});
 
   @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.15),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Text(
-        label,
-        style: const TextStyle(
-          color: Colors.white,
-          fontSize: 10.5,
-          fontWeight: FontWeight.bold,
-          letterSpacing: 0.3,
-        ),
-      ),
+  void paint(Canvas canvas, Size size) {
+    final backgroundPath = Path()..addRect(Rect.fromLTWH(0, 0, size.width, size.height));
+    final cutoutPath = Path()
+      ..addRRect(RRect.fromRectAndRadius(scanWindow, Radius.circular(borderRadius)));
+
+    final backgroundPaint = Paint()
+      ..color = Colors.black.withValues(alpha: 0.55)
+      ..style = PaintingStyle.fill;
+
+    final backgroundWithCutout = Path.combine(
+      PathOperation.difference,
+      backgroundPath,
+      cutoutPath,
     );
+
+    canvas.drawPath(backgroundWithCutout, backgroundPaint);
+
+    // Cantoneiras refinadas e perfeitamente alinhadas ao raio
+    final borderPaint = Paint()
+      ..color = Colors.white
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 3.5
+      ..strokeCap = StrokeCap.round;
+
+    const cornerLength = 24.0;
+    final r = borderRadius;
+
+    // Canto superior esquerdo
+    final tlPath = Path()
+      ..moveTo(scanWindow.left, scanWindow.top + cornerLength)
+      ..lineTo(scanWindow.left, scanWindow.top + r)
+      ..arcToPoint(Offset(scanWindow.left + r, scanWindow.top), radius: Radius.circular(r))
+      ..lineTo(scanWindow.left + cornerLength, scanWindow.top);
+    canvas.drawPath(tlPath, borderPaint);
+
+    // Canto superior direito
+    final trPath = Path()
+      ..moveTo(scanWindow.right - cornerLength, scanWindow.top)
+      ..lineTo(scanWindow.right - r, scanWindow.top)
+      ..arcToPoint(Offset(scanWindow.right, scanWindow.top + r), radius: Radius.circular(r))
+      ..lineTo(scanWindow.right, scanWindow.top + cornerLength);
+    canvas.drawPath(trPath, borderPaint);
+
+    // Canto inferior esquerdo
+    final blPath = Path()
+      ..moveTo(scanWindow.left, scanWindow.bottom - cornerLength)
+      ..lineTo(scanWindow.left, scanWindow.bottom - r)
+      ..arcToPoint(Offset(scanWindow.left + r, scanWindow.bottom), radius: Radius.circular(r))
+      ..lineTo(scanWindow.left + cornerLength, scanWindow.bottom);
+    canvas.drawPath(blPath, borderPaint);
+
+    // Canto inferior direito
+    final brPath = Path()
+      ..moveTo(scanWindow.right - cornerLength, scanWindow.bottom)
+      ..lineTo(scanWindow.right - r, scanWindow.bottom)
+      ..arcToPoint(Offset(scanWindow.right, scanWindow.bottom - r), radius: Radius.circular(r))
+      ..lineTo(scanWindow.right, scanWindow.bottom - cornerLength);
+    canvas.drawPath(brPath, borderPaint);
   }
+
+  @override
+  bool shouldRepaint(covariant _ScannerOverlayPainter oldDelegate) =>
+      oldDelegate.scanWindow != scanWindow || oldDelegate.borderRadius != borderRadius;
 }
