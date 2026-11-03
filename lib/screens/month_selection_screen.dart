@@ -1,3 +1,4 @@
+import 'main_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -24,6 +25,7 @@ class _MonthSelectionScreenState extends State<MonthSelectionScreen> with Automa
   
   bool _shouldShowContent = false;
   bool _isDescending = true;
+  int _animEpoch = 0;
 
   @override
   bool get wantKeepAlive => true;
@@ -33,6 +35,25 @@ class _MonthSelectionScreenState extends State<MonthSelectionScreen> with Automa
     super.initState();
     _loadSortPreference();
     _loadData();
+    MainScreen.activeTabNotifier.addListener(_onTabChanged);
+  }
+
+  void _onTabChanged() {
+    if (MainScreen.activeTabNotifier.value == 1 && mounted) {
+      final provider = Provider.of<ItemProvider>(context, listen: false);
+      final useAnimations = provider.animationSettings['list_animations'] ?? true;
+      if (useAnimations) {
+        setState(() {
+          _animEpoch++;
+        });
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    MainScreen.activeTabNotifier.removeListener(_onTabChanged);
+    super.dispose();
   }
 
   Future<void> _loadSortPreference() async {
@@ -47,6 +68,7 @@ class _MonthSelectionScreenState extends State<MonthSelectionScreen> with Automa
   Future<void> _toggleSort() async {
     setState(() {
       _isDescending = !_isDescending;
+      _animEpoch++;
     });
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('month_sort_descending', _isDescending);
@@ -173,9 +195,9 @@ class _MonthSelectionScreenState extends State<MonthSelectionScreen> with Automa
                               return false;
                             },
                             child: AnimationLimiter(
-                              key: const ValueKey('carrinhos_limiter_once'),
+                              key: ValueKey('carrinhos_limiter_' + _isDescending.toString() + '_' + _animEpoch.toString()),
                               child: GridView.builder(
-                                key: const ValueKey('carrinhos_grid'),
+                                key: ValueKey('carrinhos_grid_' + _isDescending.toString() + '_' + _animEpoch.toString()),
                                 physics: const BouncingScrollPhysics(parent: AlwaysScrollableScrollPhysics()),
                                 padding: EdgeInsets.fromLTRB(padding, 8, padding, 100),
                                 gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(

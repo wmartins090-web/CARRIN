@@ -12,6 +12,7 @@ import '../services/app_update_service.dart';
 import '../widgets/app_update_dialog.dart';
 
 class MainScreen extends StatefulWidget {
+  static final ValueNotifier<int> activeTabNotifier = ValueNotifier<int>(0);
   const MainScreen({super.key});
 
   @override
@@ -113,6 +114,7 @@ class MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   }
 
   void _onPageChanged(int index) {
+    MainScreen.activeTabNotifier.value = index;
     final itemProvider = Provider.of<ItemProvider>(context, listen: false);
     itemProvider.setInteractingWithChart(false);
     setState(() {

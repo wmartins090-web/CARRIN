@@ -1,3 +1,4 @@
+import 'main_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -19,6 +20,7 @@ class StatisticsScreen extends StatefulWidget {
 }
 
 class _StatisticsScreenState extends State<StatisticsScreen> with AutomaticKeepAliveClientMixin {
+  int _animEpoch = 0;
   int _selectedFilterIndex = 0; // Padrão: 3 meses
   bool _isAscending = true; // Padrão: Ordem crescente
   bool _shouldShowContent = false;
@@ -32,10 +34,24 @@ class _StatisticsScreenState extends State<StatisticsScreen> with AutomaticKeepA
   void initState() {
     super.initState();
     _loadData();
+    MainScreen.activeTabNotifier.addListener(_onTabChanged);
+  }
+
+  void _onTabChanged() {
+    if (MainScreen.activeTabNotifier.value == 2 && mounted) {
+      final provider = Provider.of<ItemProvider>(context, listen: false);
+      final useListAnimations = provider.animationSettings['list_animations'] ?? true;
+      if (useListAnimations) {
+        setState(() {
+          _animEpoch++;
+        });
+      }
+    }
   }
 
   @override
   void dispose() {
+    MainScreen.activeTabNotifier.removeListener(_onTabChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         Provider.of<ItemProvider>(context, listen: false).setInteractingWithChart(false);
@@ -143,7 +159,7 @@ class _StatisticsScreenState extends State<StatisticsScreen> with AutomaticKeepA
                         : const BouncingScrollPhysics(),
                     padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
                     child: AnimationLimiter(
-                      key: const ValueKey('stats_limiter_once'),
+                      key: ValueKey('stats_limiter_' + _animEpoch.toString()),
                       child: Column(
                         children: AnimationConfiguration.toStaggeredList(
                           duration: useListAnimations ? const Duration(milliseconds: 600) : Duration.zero,
@@ -162,7 +178,7 @@ class _StatisticsScreenState extends State<StatisticsScreen> with AutomaticKeepA
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
                                 Text('Histórico Detalhado', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: textColor)),
-                                IconButton(icon: Icon(_isAscending ? Icons.arrow_upward : Icons.arrow_downward, size: 18, color: isDarkMode ? Colors.white70 : Theme.of(context).primaryColor), onPressed: () => setState(() => _isAscending = !_isAscending)),
+                                IconButton(icon: Icon(_isAscending ? Icons.arrow_upward : Icons.arrow_downward, size: 18, color: isDarkMode ? Colors.white70 : Theme.of(context).primaryColor), onPressed: () => setState(() { _isAscending = !_isAscending; _animEpoch++; })),
                               ],
                             ),
                             const SizedBox(height: 16),
