@@ -78,8 +78,8 @@ class AppUpdateService {
   AppUpdateService._();
   static final AppUpdateService instance = AppUpdateService._();
 
-  static String currentAppVersion = '1.3.612';
-  static int currentBuildNumber = 612;
+  static String currentAppVersion = '1.3.613';
+  static int currentBuildNumber = 613;
 
   /// Inicializa dinamicamente as informações reais do pacote instalado no Android
   static Future<void> initPackageInfo() async {
@@ -119,7 +119,8 @@ class AppUpdateService {
 
     for (final url in urlsToTry) {
       try {
-        final uri = Uri.parse(url);
+        final separator = url.contains('?') ? '&' : '?';
+        final uri = Uri.parse('_cb=');
         final response = await http.get(uri).timeout(const Duration(seconds: 6));
         if (response.statusCode == 200) {
           final decoded = jsonDecode(utf8.decode(response.bodyBytes));

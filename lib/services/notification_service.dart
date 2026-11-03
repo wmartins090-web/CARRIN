@@ -114,8 +114,13 @@ class NotificationService {
       if (filePath.isNotEmpty) {
         AppUpdateService.instance.installApk(filePath);
       }
-    } else if (payload == 'check_update') {
-      AppUpdateDialog.openFromNotification(autoStartDownload: true);
+    } else if (payload != null && payload.startsWith('check_update')) {
+      String? v;
+      int? b;
+      final parts = payload.split(':');
+      if (parts.length >= 2) v = parts[1];
+      if (parts.length >= 3) b = int.tryParse(parts[2]);
+      AppUpdateDialog.openFromNotification(autoStartDownload: true, targetVersion: v, targetBuildNumber: b);
     }
   }
 
@@ -132,9 +137,14 @@ class NotificationService {
               AppUpdateService.instance.installApk(filePath);
             });
           }
-        } else if (payload == 'check_update') {
-          Future.delayed(const Duration(milliseconds: 800), () {
-            AppUpdateDialog.openFromNotification(autoStartDownload: true);
+        } else if (payload != null && payload.startsWith('check_update')) {
+          String? v;
+          int? b;
+          final parts = payload.split(':');
+          if (parts.length >= 2) v = parts[1];
+          if (parts.length >= 3) b = int.tryParse(parts[2]);
+          Future.delayed(const Duration(milliseconds: 600), () {
+            AppUpdateDialog.openFromNotification(autoStartDownload: true, targetVersion: v, targetBuildNumber: b);
           });
         }
       }
@@ -221,7 +231,7 @@ class NotificationService {
         header,
         body,
         const NotificationDetails(android: androidDetails),
-        payload: 'check_update',
+        payload: 'check_update:$version:$buildNumber',
       );
     } catch (e) {
       debugPrint('Fallback showUpdateAvailable: $e');
@@ -242,7 +252,7 @@ class NotificationService {
           'Nova Versão do CARRIN Disponível (v$version)',
           'Toque para abrir e atualizar.',
           const NotificationDetails(android: fallbackDetails),
-          payload: 'check_update',
+          payload: 'check_update:$version:$buildNumber',
         );
       } catch (_) {}
     }

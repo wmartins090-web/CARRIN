@@ -465,7 +465,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
           if (currentSelected.isNotEmpty && provider.months.contains(currentSelected)) {
             await provider.switchMonth(currentSelected);
           } else {
-            await provider.switchMonth(provider.sortedMonthsDescending.first);
+            await provider.switchMonth(provider.months.last);
           }
           if (mounted) {
             Navigator.push(
@@ -576,7 +576,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
         content: SizedBox(
           width: double.maxFinite,
           child: () {
-            final monthsList = provider.sortedMonthsDescending;
+            final monthsList = provider.months;
             return monthsList.isEmpty
                 ? const Padding(
                     padding: EdgeInsets.symmetric(vertical: 24, horizontal: 16),
@@ -630,7 +630,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
         content: SizedBox(
           width: double.maxFinite,
           child: () {
-            final monthsList = provider.sortedMonthsDescending;
+            final monthsList = provider.months;
             return monthsList.isEmpty
                 ? const Padding(
                     padding: EdgeInsets.symmetric(vertical: 24, horizontal: 16),

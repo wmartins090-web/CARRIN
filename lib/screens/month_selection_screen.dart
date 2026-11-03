@@ -106,12 +106,7 @@ class _MonthSelectionScreenState extends State<MonthSelectionScreen> with Automa
             backgroundColor: Colors.transparent,
             elevation: 0,
             actions: [
-              IconButton(
-                icon: Icon(_isDescending ? Icons.arrow_downward_rounded : Icons.arrow_upward_rounded),
-                tooltip: _isDescending ? 'Mais recentes no topo' : 'Mais antigas no topo',
-                onPressed: _toggleSort,
-              ),
-              IconButton(icon: const Icon(Icons.refresh), onPressed: () => _loadData())
+              IconButton(icon: const Icon(Icons.refresh), tooltip: 'Atualizar', onPressed: () => _loadData())
             ],
             bottom: showLoader ? PreferredSize(
               preferredSize: const Size.fromHeight(2),
@@ -174,22 +169,19 @@ class _MonthSelectionScreenState extends State<MonthSelectionScreen> with Automa
                             },
                             child: AnimationLimiter(
                               key: const ValueKey('carrinhos_limiter_once'),
-                              child: Builder(
-                                builder: (context) {
-                                  final displayMonths = _isDescending ? provider.sortedMonthsDescending : provider.sortedMonthsAscending;
-                                  return GridView.builder(
-                                    key: const ValueKey('carrinhos_grid'),
-                                    physics: const BouncingScrollPhysics(parent: AlwaysScrollableScrollPhysics()),
-                                    padding: EdgeInsets.fromLTRB(padding, 8, padding, 100),
-                                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                                      crossAxisCount: crossAxisCount,
-                                      crossAxisSpacing: 16,
-                                      mainAxisSpacing: 16,
-                                      mainAxisExtent: 140,
-                                    ),
-                                    itemCount: displayMonths.length,
-                                    itemBuilder: (context, index) {
-                                      final monthTitle = displayMonths[index];
+                              child: GridView.builder(
+                                key: const ValueKey('carrinhos_grid'),
+                                physics: const BouncingScrollPhysics(parent: AlwaysScrollableScrollPhysics()),
+                                padding: EdgeInsets.fromLTRB(padding, 8, padding, 100),
+                                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                                  crossAxisCount: crossAxisCount,
+                                  crossAxisSpacing: 16,
+                                  mainAxisSpacing: 16,
+                                  mainAxisExtent: 140,
+                                ),
+                                itemCount: provider.months.length,
+                                itemBuilder: (context, index) {
+                                  final monthTitle = provider.months[index];
                                       final summary = provider.getCachedSummaryForMonth(monthTitle);
                                       final card = _buildMonthCard(context, monthTitle, summary, provider);
                                       if (!useAnimations) return card;
@@ -201,9 +193,7 @@ class _MonthSelectionScreenState extends State<MonthSelectionScreen> with Automa
                                         child: SlideAnimation(verticalOffset: 30.0, child: FadeInAnimation(child: card)),
                                       );
                                     },
-                                  );
-                                },
-                              ),
+                                  ),
                             ),
                           ),
                         ],

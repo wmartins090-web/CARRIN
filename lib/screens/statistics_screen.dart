@@ -516,7 +516,7 @@ class _StatisticsScreenState extends State<StatisticsScreen> with AutomaticKeepA
           width: double.maxFinite,
           child: Builder(
             builder: (context) {
-              final monthsList = provider.sortedMonthsDescending;
+              final monthsList = provider.months;
               return ListView.builder(
                 shrinkWrap: true,
                 itemCount: monthsList.length,

@@ -50,11 +50,37 @@ class AppUpdateDialog extends StatefulWidget {
   }
 
   /// Abre a tela de atualização diretamente com download automático ao tocar na notificação
-  static Future<void> openFromNotification({bool autoStartDownload = true}) async {
-    final ctx = appNavigatorKey.currentContext;
+  static Future<void> openFromNotification({
+    bool autoStartDownload = true,
+    String? targetVersion,
+    int? targetBuildNumber,
+  }) async {
+    BuildContext? ctx = appNavigatorKey.currentContext;
+    if (ctx == null) {
+      for (int i = 0; i < 15; i++) {
+        await Future.delayed(const Duration(milliseconds: 200));
+        ctx = appNavigatorKey.currentContext;
+        if (ctx != null) break;
+      }
+    }
     if (ctx == null) return;
 
-    final info = await AppUpdateService.instance.checkForUpdate(ignoreDismissed: true);
+    AppUpdateInfo? info = await AppUpdateService.instance.checkForUpdate(ignoreDismissed: true);
+    
+    // Fallback: se a consulta remota demorar ou cache CDN Fastly do GitHub estiver atrasado
+    if (info == null && targetVersion != null && targetVersion.isNotEmpty) {
+      final cleanV = targetVersion.replaceFirst('v', '').trim();
+      final bNum = targetBuildNumber ?? int.tryParse(cleanV.replaceAll('.', '')) ?? (AppUpdateService.currentBuildNumber + 1);
+      info = AppUpdateInfo(
+        version: cleanV,
+        buildNumber: bNum,
+        releaseDate: DateTime.now().toIso8601String(),
+        title: 'CARRIN v$cleanV',
+        releaseNotes: ['Atualização com melhorias de estabilidade e novas funções'],
+        apkUrl: 'https://github.com/wmartins090-web/CARRIN/releases/download/v$cleanV/carrin_v$cleanV.apk',
+      );
+    }
+
     if (info != null && ctx.mounted) {
       final cached = await AppUpdateService.instance.getDownloadedApk(info);
       if (cached != null && ctx.mounted) {

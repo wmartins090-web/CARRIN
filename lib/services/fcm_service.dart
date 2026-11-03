@@ -101,8 +101,10 @@ class FcmService {
         // Ouvinte para quando o usuário toca na notificação e abre o app
         FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
           debugPrint('App aberto a partir de uma notificação FCM: ${message.data}');
+          final v = message.data['version']?.toString();
+          final b = int.tryParse(message.data['build_number']?.toString() ?? '');
           Future.delayed(const Duration(milliseconds: 600), () {
-            AppUpdateDialog.openFromNotification(autoStartDownload: true);
+            AppUpdateDialog.openFromNotification(autoStartDownload: true, targetVersion: v, targetBuildNumber: b);
           });
         });
 
@@ -110,8 +112,10 @@ class FcmService {
         messaging.getInitialMessage().then((initialMessage) {
           if (initialMessage != null) {
             debugPrint('App aberto via getInitialMessage FCM: ${initialMessage.data}');
+            final v = initialMessage.data['version']?.toString();
+            final b = int.tryParse(initialMessage.data['build_number']?.toString() ?? '');
             Future.delayed(const Duration(milliseconds: 1000), () {
-              AppUpdateDialog.openFromNotification(autoStartDownload: true);
+              AppUpdateDialog.openFromNotification(autoStartDownload: true, targetVersion: v, targetBuildNumber: b);
             });
           }
         });

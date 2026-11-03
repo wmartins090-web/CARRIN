@@ -1350,53 +1350,33 @@ void main() {
       SharedPreferences.setMockInitialValues({});
     });
 
-    test('sortedMonthsDescending places newest months on top and oldest at the bottom based on creation order', () {
+    test('months strictly preserves creation order without shuffling', () {
       final provider = ItemProvider();
-      provider.setMonthsForTesting([
+      final testOrder = [
         'Janeiro 2025',
         'Dezembro 2024',
         'Outubro 2026',
         'Fevereiro 2025',
-      ]);
+      ];
+      provider.setMonthsForTesting(testOrder);
 
-      final desc = provider.sortedMonthsDescending;
-      expect(desc, equals([
-        'Fevereiro 2025',
-        'Outubro 2026',
-        'Dezembro 2024',
-        'Janeiro 2025',
-      ]));
-
-      final asc = provider.sortedMonthsAscending;
-      expect(asc, equals([
-        'Janeiro 2025',
-        'Dezembro 2024',
-        'Outubro 2026',
-        'Fevereiro 2025',
-      ]));
+      expect(provider.months, equals(testOrder));
+      expect(provider.sortedMonthsDescending, equals(testOrder));
+      expect(provider.sortedMonthsAscending, equals(testOrder));
     });
 
-    test('sortedMonthsDescending places latest created custom lists on top and older ones below', () {
+    test('custom named lists strictly preserve creation order', () {
       final provider = ItemProvider();
-      provider.setMonthsForTesting([
+      final customLists = [
         'Rancho de Casa',
         'Churrasco com Amigos',
         'Festa Junina',
-      ]);
+      ];
+      provider.setMonthsForTesting(customLists);
 
-      final desc = provider.sortedMonthsDescending;
-      expect(desc, equals([
-        'Festa Junina',
-        'Churrasco com Amigos',
-        'Rancho de Casa',
-      ]));
-
-      final asc = provider.sortedMonthsAscending;
-      expect(asc, equals([
-        'Rancho de Casa',
-        'Churrasco com Amigos',
-        'Festa Junina',
-      ]));
+      expect(provider.months, equals(customLists));
+      expect(provider.sortedMonthsDescending, equals(customLists));
+      expect(provider.sortedMonthsAscending, equals(customLists));
     });
   });
 }
