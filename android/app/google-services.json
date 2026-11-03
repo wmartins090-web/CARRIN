@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "911410163704",
+    "project_id": "carrin-b4fa7",
+    "storage_bucket": "carrin-b4fa7.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:911410163704:android:37edea51a3747db056f00d",
+        "android_client_info": {
+          "package_name": "com.wmartins.carrin"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAA9bBulv98-yxCl8iUm9oHIqoMRb38kMQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

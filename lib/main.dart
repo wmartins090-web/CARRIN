@@ -9,6 +9,7 @@ import 'services/notification_service.dart';
 import 'services/auth_service.dart';
 import 'services/app_update_service.dart';
 import 'services/background_update_checker.dart';
+import 'services/fcm_service.dart';
 
 /// Entry point for the CARRIN application.
 /// 
@@ -49,6 +50,13 @@ void main() async {
     await BackgroundUpdateChecker.initialize();
   } catch (e) {
     debugPrint("Erro ao inicializar BackgroundUpdateChecker: $e");
+  }
+
+  // Setup Firebase Cloud Messaging (Push Notifications mesmo com app fechado)
+  try {
+    await FcmService.instance.initialize();
+  } catch (e) {
+    debugPrint("Erro ao inicializar FcmService: $e");
   }
 
   // Initialize Theme synchronously before rendering (sempre garantido)
