@@ -71,12 +71,15 @@ class AppUpdateInfo {
 }
 
 /// Serviço responsável por identificar atualizações, baixar APKs e invocar a instalação nativa.
+/// Chave global do navegador para navegação de atualizações e notificações
+final GlobalKey<NavigatorState> appNavigatorKey = GlobalKey<NavigatorState>();
+
 class AppUpdateService {
   AppUpdateService._();
   static final AppUpdateService instance = AppUpdateService._();
 
-  static String currentAppVersion = '1.3.609';
-  static int currentBuildNumber = 609;
+  static String currentAppVersion = '1.3.610';
+  static int currentBuildNumber = 610;
 
   /// Inicializa dinamicamente as informações reais do pacote instalado no Android
   static Future<void> initPackageInfo() async {

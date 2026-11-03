@@ -136,6 +136,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     final themeProvider = Provider.of<ThemeProvider>(context);
     return MaterialApp(
+      navigatorKey: appNavigatorKey,
       title: 'CARRIN',
       debugShowCheckedModeBanner: false,
       theme: AppThemes.getTheme(themeProvider.seedColor, false, colorBlindMode: themeProvider.colorBlindMode),

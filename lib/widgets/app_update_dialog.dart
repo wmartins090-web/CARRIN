@@ -5,10 +5,21 @@ import '../services/app_update_service.dart';
 class AppUpdateDialog extends StatefulWidget {
   final AppUpdateInfo updateInfo;
   final String? readyApkPath;
+  final bool autoStartDownload;
 
-  const AppUpdateDialog({super.key, required this.updateInfo, this.readyApkPath});
+  const AppUpdateDialog({
+    super.key,
+    required this.updateInfo,
+    this.readyApkPath,
+    this.autoStartDownload = false,
+  });
 
-  static Future<void> show(BuildContext context, AppUpdateInfo info, {String? readyApkPath}) {
+  static Future<void> show(
+    BuildContext context,
+    AppUpdateInfo info, {
+    String? readyApkPath,
+    bool autoStartDownload = false,
+  }) {
     return showGeneralDialog(
       context: context,
       barrierDismissible: !info.forceUpdate,
@@ -17,6 +28,7 @@ class AppUpdateDialog extends StatefulWidget {
       pageBuilder: (context, anim1, anim2) => AppUpdateDialog(
         updateInfo: info,
         readyApkPath: readyApkPath,
+        autoStartDownload: autoStartDownload,
       ),
       transitionBuilder: (context, anim1, anim2, child) {
         final curve = Curves.easeOutBack.transform(anim1.value);
@@ -34,6 +46,22 @@ class AppUpdateDialog extends StatefulWidget {
   /// Atalho para exibir o diálogo com o arquivo APK já baixado e pronto
   static Future<void> showReady(BuildContext context, AppUpdateInfo info, String filePath) {
     return show(context, info, readyApkPath: filePath);
+  }
+
+  /// Abre a tela de atualização diretamente com download automático ao tocar na notificação
+  static Future<void> openFromNotification({bool autoStartDownload = true}) async {
+    final ctx = appNavigatorKey.currentContext;
+    if (ctx == null) return;
+
+    final info = await AppUpdateService.instance.checkForUpdate(ignoreDismissed: true);
+    if (info != null && ctx.mounted) {
+      final cached = await AppUpdateService.instance.getDownloadedApk(info);
+      if (cached != null && ctx.mounted) {
+        AppUpdateDialog.showReady(ctx, info, cached.path);
+      } else if (ctx.mounted) {
+        AppUpdateDialog.show(ctx, info, autoStartDownload: autoStartDownload);
+      }
+    }
   }
 
   @override
@@ -60,6 +88,8 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
           setState(() {
             _downloadedFilePath = file.path;
           });
+        } else if (widget.autoStartDownload && mounted) {
+          _startDownloadAndInstall();
         }
       });
     }

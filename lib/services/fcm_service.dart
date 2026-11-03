@@ -4,6 +4,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'notification_service.dart';
 import 'app_update_service.dart';
+import '../widgets/app_update_dialog.dart';
 
 /// Handler executado em background quando uma mensagem Push do Firebase chega
 /// com o aplicativo completamente fechado ou em segundo plano.
@@ -94,7 +95,19 @@ class FcmService {
         // Ouvinte para quando o usuário toca na notificação e abre o app
         FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
           debugPrint('App aberto a partir de uma notificação FCM: ${message.data}');
-          AppUpdateService.instance.checkForUpdate();
+          Future.delayed(const Duration(milliseconds: 600), () {
+            AppUpdateDialog.openFromNotification(autoStartDownload: true);
+          });
+        });
+
+        // Caso o app tenha sido aberto a partir de uma notificação com o app fechado
+        messaging.getInitialMessage().then((initialMessage) {
+          if (initialMessage != null) {
+            debugPrint('App aberto via getInitialMessage FCM: ${initialMessage.data}');
+            Future.delayed(const Duration(milliseconds: 1000), () {
+              AppUpdateDialog.openFromNotification(autoStartDownload: true);
+            });
+          }
         });
 
         _initialized = true;

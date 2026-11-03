@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import '../services/utils.dart';
 import '../services/app_update_service.dart';
+import '../widgets/app_update_dialog.dart';
 
 /// Service responsible for managing local notifications.
 /// 
@@ -113,6 +114,8 @@ class NotificationService {
       if (filePath.isNotEmpty) {
         AppUpdateService.instance.installApk(filePath);
       }
+    } else if (payload == 'check_update') {
+      AppUpdateDialog.openFromNotification(autoStartDownload: true);
     }
   }
 
@@ -129,6 +132,10 @@ class NotificationService {
               AppUpdateService.instance.installApk(filePath);
             });
           }
+        } else if (payload == 'check_update') {
+          Future.delayed(const Duration(milliseconds: 800), () {
+            AppUpdateDialog.openFromNotification(autoStartDownload: true);
+          });
         }
       }
     } catch (e) {
