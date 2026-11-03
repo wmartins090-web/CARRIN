@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/app_update_service.dart';
+import '../services/notification_service.dart';
 
 /// Modal compacto e amigável de instalação para o usuário final
 class AppUpdateDialog extends StatefulWidget {
@@ -132,6 +133,14 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
       );
 
       _downloadedFilePath = file.path;
+
+      if (!mounted) {
+        NotificationService().showUpdateReady(
+          version: widget.updateInfo.version,
+          apkPath: file.path,
+        );
+        return;
+      }
 
       final canInstall = await AppUpdateService.instance.canRequestPackageInstalls();
       if (!canInstall) {
@@ -408,7 +417,45 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
                 const SizedBox(height: 20),
 
                 // Botões de Ação
-                if (!_isDownloading)
+                if (_isDownloading)
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: () {
+                        Navigator.pop(context);
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: const Row(
+                              children: [
+                                SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                                SizedBox(width: 12),
+                                Expanded(
+                                  child: Text('Download continuando em segundo plano. Você será avisado para instalar!'),
+                                ),
+                              ],
+                            ),
+                            duration: const Duration(seconds: 4),
+                            behavior: SnackBarBehavior.floating,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                          ),
+                        );
+                      },
+                      icon: const Icon(Icons.arrow_downward_rounded, size: 18),
+                      label: const Text('Baixar em Segundo Plano'),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                      ),
+                    ),
+                  )
+                else
                   Row(
                     children: [
                       if (!info.forceUpdate)

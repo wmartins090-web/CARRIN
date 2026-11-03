@@ -992,37 +992,11 @@ class ItemProvider with ChangeNotifier {
     _months = List.from(testMonths);
   }
 
-  /// Retorna as listas de carrinhos ordenadas cronologicamente com as mais recentes no topo (decrescente).
-  List<String> get sortedMonthsDescending {
-    final list = List<String>.from(_months);
-    list.sort((a, b) {
-      final keyA = _parseMonthYearComparable(a);
-      final keyB = _parseMonthYearComparable(b);
-      if (keyA > 0 && keyB > 0 && keyA != keyB) {
-        return keyB.compareTo(keyA);
-      }
-      final idxA = _months.indexOf(a);
-      final idxB = _months.indexOf(b);
-      return idxB.compareTo(idxA);
-    });
-    return list;
-  }
+  /// Retorna as listas de carrinhos na ordem de criação decrescente (mais recentes criadas no topo).
+  List<String> get sortedMonthsDescending => _months.reversed.toList();
 
-  /// Retorna as listas de carrinhos ordenadas cronologicamente com as mais antigas no topo (crescente).
-  List<String> get sortedMonthsAscending {
-    final list = List<String>.from(_months);
-    list.sort((a, b) {
-      final keyA = _parseMonthYearComparable(a);
-      final keyB = _parseMonthYearComparable(b);
-      if (keyA > 0 && keyB > 0 && keyA != keyB) {
-        return keyA.compareTo(keyB);
-      }
-      final idxA = _months.indexOf(a);
-      final idxB = _months.indexOf(b);
-      return idxA.compareTo(idxB);
-    });
-    return list;
-  }
+  /// Retorna as listas de carrinhos na ordem de criação crescente (mais antigas criadas no topo).
+  List<String> get sortedMonthsAscending => List<String>.from(_months);
   bool get isLoading => _isLoading;
   bool get isSyncingBackground => _isSyncingBackground;
   bool get isMonthsLoading => _isMonthsLoading;
@@ -1954,19 +1928,24 @@ class ItemProvider with ChangeNotifier {
       final List<String> mergedMonths = [];
       final Set<String> seenLower = {};
 
-      for (final m in fetchedMonths) {
-        final key = m.trim().toLowerCase();
-        if (seenLower.add(key)) {
-          mergedMonths.add(m);
-        }
-      }
       final List<String> missingInCloud = [];
+      // 1. Preserva estritamente a ordem de criação local das listas
       for (final m in localPersonalMonths) {
         final key = m.trim().toLowerCase();
         if (DatabaseHelper.isDummySheetName(m) || explicitlyDeleted.contains(key)) continue;
         if (seenLower.add(key)) {
           mergedMonths.add(m);
-          missingInCloud.add(m);
+          if (!fetchedMonths.any((f) => f.trim().toLowerCase() == key)) {
+            missingInCloud.add(m);
+          }
+        }
+      }
+
+      // 2. Adiciona ao final apenas listas novas criadas externamente na nuvem
+      for (final m in fetchedMonths) {
+        final key = m.trim().toLowerCase();
+        if (seenLower.add(key)) {
+          mergedMonths.add(m);
         }
       }
 

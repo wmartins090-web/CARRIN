@@ -1350,7 +1350,7 @@ void main() {
       SharedPreferences.setMockInitialValues({});
     });
 
-    test('sortedMonthsDescending places newest months on top and oldest at the bottom', () {
+    test('sortedMonthsDescending places newest months on top and oldest at the bottom based on creation order', () {
       final provider = ItemProvider();
       provider.setMonthsForTesting([
         'Janeiro 2025',
@@ -1361,18 +1361,18 @@ void main() {
 
       final desc = provider.sortedMonthsDescending;
       expect(desc, equals([
-        'Outubro 2026',
         'Fevereiro 2025',
-        'Janeiro 2025',
+        'Outubro 2026',
         'Dezembro 2024',
+        'Janeiro 2025',
       ]));
 
       final asc = provider.sortedMonthsAscending;
       expect(asc, equals([
-        'Dezembro 2024',
         'Janeiro 2025',
-        'Fevereiro 2025',
+        'Dezembro 2024',
         'Outubro 2026',
+        'Fevereiro 2025',
       ]));
     });
 
