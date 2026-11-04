@@ -140,7 +140,7 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> with SingleTick
                 HapticFeedback.heavyImpact();
               }
               final itemProvider = Provider.of<ItemProvider>(context, listen: false);
-              _showImportSharedListDialog(context, payload, itemProvider);
+              _handleReceivedSharedList(context, payload, itemProvider);
             }
           }
         },
@@ -1107,7 +1107,7 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> with SingleTick
                     final sharedPayload = SharedListService.instance.decodeList(trimmed);
                     if (sharedPayload != null) {
                       if (!context.mounted) return;
-                      _showImportSharedListDialog(context, sharedPayload, itemProvider);
+                      await _handleReceivedSharedList(context, sharedPayload, itemProvider);
                       return;
                     }
 
@@ -2635,74 +2635,42 @@ if (_isMarketLocked)
     );
   }
 
-  void _showImportSharedListDialog(BuildContext context, SharedListPayload payload, ItemProvider itemProvider) {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        title: const Row(
-          children: [
-            Icon(Icons.download_for_offline_rounded, color: Colors.green),
-            SizedBox(width: 10),
-            Text('Lista Compartilhada', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-          ],
+  Future<void> _handleReceivedSharedList(
+    BuildContext context,
+    SharedListPayload payload,
+    ItemProvider itemProvider,
+  ) async {
+    // Importa todos os produtos e abre a lista imediatamente (Zero cliques e zero diálogos)
+    await itemProvider.importAndOpenSharedList(payload);
+
+    try {
+      if ((await Vibration.hasVibrator()) == true) {
+        Vibration.vibrate(duration: 80);
+      }
+    } catch (_) {}
+
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.sync_rounded, color: Colors.greenAccent),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  '🎉 Lista "${payload.title}" aberta e sincronizada!',
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+              ),
+            ],
+          ),
+          backgroundColor: const Color(0xFF1B5E20),
+          duration: const Duration(seconds: 4),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
         ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Lista recebida: "${payload.title}"', style: const TextStyle(fontWeight: FontWeight.bold)),
-            const SizedBox(height: 6),
-            Text('Contém ${payload.items.length} itens cadastrados.'),
-            if (payload.budget > 0)
-              Text('Orçamento: ${Utils.formatCurrency(payload.budget)}'),
-            const SizedBox(height: 12),
-            const Text('Como deseja importar os produtos para o seu carrinho?'),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancelar', style: TextStyle(color: Colors.grey)),
-          ),
-          OutlinedButton(
-            onPressed: () async {
-              Navigator.pop(ctx);
-              await itemProvider.importSharedItems(
-                payload.items,
-                replaceExisting: false,
-                listTitle: null,
-                newBudget: null,
-              );
-              if (context.mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Itens mesclados na lista "${itemProvider.currentMonth}"!'), backgroundColor: Colors.green),
-                );
-              }
-            },
-            child: const Text('Mesclar no Carrinho'),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white),
-            onPressed: () async {
-              Navigator.pop(ctx);
-              await itemProvider.importSharedListWithSpreadsheet(
-                title: payload.title,
-                spreadsheetId: payload.spreadsheetId,
-                fallbackItems: payload.items,
-                budget: payload.budget,
-              );
-              if (context.mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Lista "${payload.title}" criada e conectada com sucesso!'), backgroundColor: Colors.green),
-                );
-              }
-            },
-            child: Text('Criar Lista "${payload.title}"'),
-          ),
-        ],
-      ),
-    );
+      );
+    }
   }
 
   void _handleScannedReceiptQr(BuildContext context, String rawUrlOrKey, ItemProvider itemProvider) {

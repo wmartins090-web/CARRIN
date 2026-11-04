@@ -12,6 +12,8 @@ import '../services/auth_service.dart';
 import '../services/quick_summary_service.dart';
 import '../services/location_service.dart';
 import '../services/community_price_service.dart';
+import '../services/shared_list_service.dart';
+import '../services/shared_list_sync_service.dart';
 
 /// Main state management provider for the application.
 /// 
@@ -1338,16 +1340,188 @@ class ItemProvider with ChangeNotifier {
   Future<String?> getDedicatedSpreadsheetIdForList(String listTitle) =>
       _service.getSpreadsheetIdForMonth(listTitle);
 
-  /// Importa a lista compartilhada associando à planilha dedicada dela
+  String _normalizeKey(String title) => title.trim().toLowerCase().replaceAll(RegExp(r'\s+'), '_');
+
+  final Map<String, String?> _syncIdByMonth = {};
+  String? _activeListeningSyncId;
+
+  /// Indica se a lista atualmente aberta possui sincronização compartilhada em tempo real ativa
+  bool get hasActiveSharedSync => _activeListeningSyncId != null && _activeListeningSyncId!.isNotEmpty;
+
+  /// Obtém o syncId persistido para um determinado mês/lista
+  Future<String?> getSyncIdForMonth(String month) async {
+    if (_syncIdByMonth.containsKey(month)) return _syncIdByMonth[month];
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final key = 'shared_sync_id_for_${_normalizeKey(month)}';
+      final val = prefs.getString(key);
+      _syncIdByMonth[month] = val;
+      return val;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Salva ou remove o syncId associado a uma lista
+  Future<void> setSyncIdForMonth(String month, String? syncId) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final key = 'shared_sync_id_for_${_normalizeKey(month)}';
+      if (syncId == null || syncId.trim().isEmpty) {
+        await prefs.remove(key);
+        _syncIdByMonth[month] = null;
+      } else {
+        await prefs.setString(key, syncId.trim());
+        _syncIdByMonth[month] = syncId.trim();
+      }
+    } catch (_) {}
+  }
+
+  /// Retorna o syncId existente ou gera um novo e persiste
+  Future<String> getOrCreateSyncIdForMonth(String month) async {
+    final existing = await getSyncIdForMonth(month);
+    if (existing != null && existing.isNotEmpty) return existing;
+    final newId = 'c_${DateTime.now().millisecondsSinceEpoch.toRadixString(36)}';
+    await setSyncIdForMonth(month, newId);
+    return newId;
+  }
+
+  /// Inicia a escuta ativa de atualizações remotas para a lista informada
+  Future<void> startSyncListeningForMonth(String month) async {
+    final sid = await getSyncIdForMonth(month);
+    if (sid != null && sid.isNotEmpty) {
+      _activeListeningSyncId = sid;
+      SharedListSyncService.instance.startListening(
+        syncId: sid,
+        onRemoteUpdate: (event) => _applyRemoteSyncEvent(event, month),
+      );
+    } else {
+      _activeListeningSyncId = null;
+      SharedListSyncService.instance.stopListening();
+    }
+    _safeNotify();
+  }
+
+  /// Aplica evento remoto recebido de outro aparelho na lista aberta
+  Future<void> _applyRemoteSyncEvent(Map<String, dynamic> event, String month) async {
+    if (currentMonth != month) return;
+
+    final act = event['act'] as String?;
+    final d = event['d'];
+    if (act == null || d is! Map<String, dynamic>) return;
+
+    bool changed = false;
+
+    if (act == 'toggle') {
+      final name = d['name'] as String?;
+      final barcode = d['barcode'] as String?;
+      final isBought = d['isBought'] == true;
+
+      for (var it in _items) {
+        bool match = false;
+        if (barcode != null && barcode.isNotEmpty && it.barcode != null && it.barcode!.isNotEmpty) {
+          match = Item.parseBarcode(it.barcode) == Item.parseBarcode(barcode);
+        }
+        if (!match && name != null && name.isNotEmpty) {
+          match = Utils.normalize(it.name) == Utils.normalize(name);
+        }
+        if (match) {
+          if (it.isBought != isBought) {
+            it.isBought = isBought;
+            changed = true;
+          }
+          break;
+        }
+      }
+    } else if (act == 'update') {
+      final name = d['name'] as String?;
+      final barcode = d['barcode'] as String?;
+
+      for (var it in _items) {
+        bool match = false;
+        if (barcode != null && barcode.isNotEmpty && it.barcode != null && it.barcode!.isNotEmpty) {
+          match = Item.parseBarcode(it.barcode) == Item.parseBarcode(barcode);
+        }
+        if (!match && name != null && name.isNotEmpty) {
+          match = Utils.normalize(it.name) == Utils.normalize(name);
+        }
+        if (match) {
+          if (d.containsKey('quantity')) it.quantity = (d['quantity'] as num).toDouble();
+          if (d.containsKey('unitPrice')) it.unitPrice = (d['unitPrice'] as num).toDouble();
+          if (d.containsKey('isBought')) it.isBought = d['isBought'] == true;
+          if (d.containsKey('category') && (d['category'] as String).isNotEmpty) it.category = d['category'] as String;
+          if (d.containsKey('isKg')) it.isKg = d['isKg'] == true;
+          changed = true;
+          break;
+        }
+      }
+    } else if (act == 'add') {
+      final name = d['name'] as String? ?? 'Item';
+      final barcode = d['barcode'] as String?;
+
+      bool alreadyExists = _items.any((it) {
+        if (barcode != null && barcode.isNotEmpty && it.barcode != null && it.barcode!.isNotEmpty) {
+          return Item.parseBarcode(it.barcode) == Item.parseBarcode(barcode);
+        }
+        return Utils.normalize(it.name) == Utils.normalize(name);
+      });
+
+      if (!alreadyExists) {
+        final nextIndex = _items.isEmpty ? 7 : (_items.last.index ?? 6) + 1;
+        final newItem = Item(
+          index: nextIndex,
+          name: name,
+          quantity: (d['quantity'] as num?)?.toDouble() ?? 1.0,
+          unitPrice: (d['unitPrice'] as num?)?.toDouble() ?? 0.0,
+          category: (d['category'] as String?) ?? 'Outros',
+          isKg: d['isKg'] == true,
+          isBought: d['isBought'] == true,
+          barcode: barcode,
+        );
+        _items.add(newItem);
+        changed = true;
+      }
+    } else if (act == 'remove') {
+      final name = d['name'] as String?;
+      final barcode = d['barcode'] as String?;
+      final prevLen = _items.length;
+      _items.removeWhere((it) {
+        if (barcode != null && barcode.isNotEmpty && it.barcode != null && it.barcode!.isNotEmpty) {
+          return Item.parseBarcode(it.barcode) == Item.parseBarcode(barcode);
+        }
+        if (name != null && name.isNotEmpty) {
+          return Utils.normalize(it.name) == Utils.normalize(name);
+        }
+        return false;
+      });
+      if (_items.length != prevLen) {
+        changed = true;
+      }
+    }
+
+    if (changed) {
+      _updateLocalMetrics(checkBudget: false);
+      try {
+        await _dbHelper.saveItems(month, _items);
+        _itemsCache[month] = List.from(_items);
+      } catch (_) {}
+      _safeNotify();
+    }
+  }
+
+  /// Importa a lista compartilhada associando à planilha dedicada ou canal de sync
   Future<void> importSharedListWithSpreadsheet({
     required String title,
     required String? spreadsheetId,
     required List<Item> fallbackItems,
     double? budget,
+    String? syncId,
   }) async {
     // 1. Cria a lista no app do outro usuário se ainda não existir
     if (!_months.contains(title)) {
       await createNewMonth(title, false, initialBudget: budget);
+    } else if (budget != null && budget > 0) {
+      await updateBudget(budget);
     }
 
     // 2. Se houver planilha compartilhada para esta lista, associa o ID exclusivamente a ela
@@ -1355,18 +1529,37 @@ class ItemProvider with ChangeNotifier {
       await _service.setSpreadsheetIdForMonth(title, spreadsheetId);
     }
 
-    // 3. Alterna para esta lista
+    // 3. Se houver syncId para sincronização peer-to-peer em tempo real
+    if (syncId != null && syncId.isNotEmpty) {
+      await setSyncIdForMonth(title, syncId);
+    }
+
+    // 4. Alterna para esta lista
     await switchMonth(title);
 
-    // 4. SEMPRE carrega os itens recebidos no banco local e na memória primeiro!
+    // 5. SEMPRE carrega os itens recebidos no banco local e na memória primeiro!
     // Isso garante que o segundo celular exiba instantaneamente todos os produtos recebidos (0ms)
     await importSharedItems(fallbackItems, replaceExisting: true, listTitle: title, newBudget: budget);
 
-    // 5. Se houver planilha dedicada e sincronização Google ativa, sincroniza em background
+    // 6. Ativa escuta em tempo real
+    await startSyncListeningForMonth(title);
+
+    // 7. Se houver planilha dedicada e sincronização Google ativa, sincroniza em background
     if (spreadsheetId != null && spreadsheetId.isNotEmpty && isSyncEnabled) {
       _runBackgroundSync(title);
     }
     _safeNotify();
+  }
+
+  /// Importa e abre diretamente a lista compartilhada recebida (Zero cliques adicionais)
+  Future<void> importAndOpenSharedList(SharedListPayload payload) async {
+    await importSharedListWithSpreadsheet(
+      title: payload.title,
+      spreadsheetId: payload.spreadsheetId,
+      fallbackItems: payload.items,
+      budget: payload.budget,
+      syncId: payload.syncId,
+    );
   }
 
   double get totalCost => _items.where((it) => it.isBought).fold(0.0, (sum, item) => sum + item.totalPrice);
@@ -2045,6 +2238,7 @@ class ItemProvider with ChangeNotifier {
     } else {
       debugPrint('Inicialização do GSheets evitada em switchMonth para o mês $month: criação ainda pendente ou sincronização desativada.');
     }
+    await startSyncListeningForMonth(month);
   }
 
   Future<void> switchMonth(String month) async {
@@ -2364,6 +2558,25 @@ class ItemProvider with ChangeNotifier {
     
     _safeNotify();
     
+    // Notifica outros dispositivos sincronizados via peer-sync em tempo real
+    getSyncIdForMonth(month).then((sid) {
+      if (sid != null && sid.isNotEmpty) {
+        SharedListSyncService.instance.publishAction(
+          syncId: sid,
+          action: 'add',
+          data: {
+            'name': newItem.name,
+            'quantity': newItem.quantity,
+            'unitPrice': newItem.unitPrice,
+            'category': newItem.category,
+            'isKg': newItem.isKg,
+            'isBought': newItem.isBought,
+            'barcode': newItem.barcode,
+          },
+        );
+      }
+    });
+
     _enqueueOperation('sync_items', month, {});
   }
 
@@ -2427,6 +2640,25 @@ class ItemProvider with ChangeNotifier {
       
       _safeNotify();
       
+      // Notifica outros dispositivos sincronizados via peer-sync em tempo real
+      getSyncIdForMonth(month).then((sid) {
+        if (sid != null && sid.isNotEmpty) {
+          SharedListSyncService.instance.publishAction(
+            syncId: sid,
+            action: 'update',
+            data: {
+              'name': updatedItem.name,
+              'barcode': updatedItem.barcode,
+              'quantity': updatedItem.quantity,
+              'unitPrice': updatedItem.unitPrice,
+              'category': updatedItem.category,
+              'isKg': updatedItem.isKg,
+              'isBought': updatedItem.isBought,
+            },
+          );
+        }
+      });
+
       _enqueueOperation('sync_items', month, {});
     }
   }
@@ -2437,6 +2669,13 @@ class ItemProvider with ChangeNotifier {
     if (isMonthFinalized(month)) {
       debugPrint('Erro: Tentativa de remover item de um mês finalizado.');
       return;
+    }
+    Item? removed;
+    for (var it in _items) {
+      if (it.index == index) {
+        removed = it;
+        break;
+      }
     }
     _items.removeWhere((it) => it.index == index);
     
@@ -2465,6 +2704,23 @@ class ItemProvider with ChangeNotifier {
     
     _safeNotify();
     
+    // Notifica outros dispositivos sincronizados via peer-sync em tempo real
+    final removedItem = removed;
+    if (removedItem != null) {
+      getSyncIdForMonth(month).then((sid) {
+        if (sid != null && sid.isNotEmpty) {
+          SharedListSyncService.instance.publishAction(
+            syncId: sid,
+            action: 'remove',
+            data: {
+              'name': removedItem.name,
+              'barcode': removedItem.barcode,
+            },
+          );
+        }
+      });
+    }
+
     _enqueueOperation('sync_items', month, {});
   }
 
@@ -2493,6 +2749,21 @@ class ItemProvider with ChangeNotifier {
     
     _safeNotify();
     
+    // Notifica outros dispositivos sincronizados via peer-sync em tempo real
+    getSyncIdForMonth(month).then((sid) {
+      if (sid != null && sid.isNotEmpty) {
+        SharedListSyncService.instance.publishAction(
+          syncId: sid,
+          action: 'toggle',
+          data: {
+            'name': item.name,
+            'barcode': item.barcode,
+            'isBought': item.isBought,
+          },
+        );
+      }
+    });
+
     _enqueueOperation('sync_items', month, {});
   }
 

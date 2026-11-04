@@ -14,6 +14,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../providers/item_provider.dart';
 import '../services/user_sheets_service.dart';
 import '../services/shared_list_service.dart';
+import 'package:vibration/vibration.dart';
 
 /// BottomSheet para Compartilhamento e Sincronização de Lista
 /// com suporte completo a NFC (Aproximação Ativa), QR Code e Google Sheets.
@@ -106,6 +107,10 @@ class _SharedListPairingSheetState extends State<SharedListPairingSheet>
       dedicatedSsId = await provider.getOrCreateDedicatedSpreadsheetForList(_selectedList);
     }
 
+    // Obtém ou cria syncId para sincronização ponto-a-ponto instantânea
+    final syncId = await provider.getOrCreateSyncIdForMonth(_selectedList);
+    await provider.startSyncListeningForMonth(_selectedList);
+
     if (mounted) {
       setState(() {
         _spreadsheetId = dedicatedSsId;
@@ -117,6 +122,7 @@ class _SharedListPairingSheetState extends State<SharedListPairingSheet>
           budget: budget,
           items: items,
           spreadsheetId: dedicatedSsId,
+          syncId: syncId,
         );
       });
     }
@@ -290,7 +296,7 @@ class _SharedListPairingSheetState extends State<SharedListPairingSheet>
               final payload = SharedListService.instance.decodeList(extracted);
               if (payload != null && mounted) {
                 Navigator.pop(context);
-                _showImportConfirmationDialog(context, payload, provider);
+                await _autoImportAndOpen(context, payload, provider);
                 return;
               }
             }
@@ -313,91 +319,41 @@ class _SharedListPairingSheetState extends State<SharedListPairingSheet>
     }
   }
 
-  void _showImportConfirmationDialog(
+  Future<void> _autoImportAndOpen(
     BuildContext context,
     SharedListPayload payload,
     ItemProvider provider,
-  ) {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        title: const Row(
-          children: [
-            Icon(Icons.download_for_offline_rounded, color: Colors.green),
-            SizedBox(width: 10),
-            Text('Lista Compartilhada!', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Lista: "${payload.title}"', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
-            const SizedBox(height: 6),
-            Text('Contém ${payload.items.length} itens cadastrados.'),
-            const SizedBox(height: 10),
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: Colors.green.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(10),
+  ) async {
+    await provider.importAndOpenSharedList(payload);
+
+    try {
+      if ((await Vibration.hasVibrator()) == true) {
+        Vibration.vibrate(duration: 80);
+      }
+    } catch (_) {}
+
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.sync_rounded, color: Colors.greenAccent),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  '🎉 Lista "${payload.title}" aberta e sincronizada!',
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
               ),
-              child: Text(
-                payload.spreadsheetId != null
-                    ? '✓ Esta lista será criada no seu app e sincronizará em tempo real pela planilha do Google (as suas outras listas não são alteradas).'
-                    : '✓ Somente esta lista será importada no seu app. Suas outras listas não são alteradas.',
-                style: const TextStyle(fontSize: 12, color: Colors.green),
-              ),
-            ),
-            const SizedBox(height: 12),
-            const Text('Como deseja abrir esta lista no seu aparelho?'),
-          ],
+            ],
+          ),
+          backgroundColor: const Color(0xFF1B5E20),
+          duration: const Duration(seconds: 4),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancelar', style: TextStyle(color: Colors.grey)),
-          ),
-          OutlinedButton(
-            onPressed: () async {
-              Navigator.pop(ctx);
-              await provider.importSharedItems(
-                payload.items,
-                replaceExisting: false,
-                listTitle: null,
-                newBudget: null,
-              );
-              if (context.mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Itens mesclados na lista "${provider.currentMonth}"!'), backgroundColor: Colors.green),
-                );
-              }
-            },
-            child: const Text('Mesclar no Carrinho'),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white),
-            onPressed: () async {
-              Navigator.pop(ctx);
-              Navigator.pop(context); // Fecha a folha para exibir imediatamente a lista importada
-              await provider.importSharedListWithSpreadsheet(
-                title: payload.title,
-                spreadsheetId: payload.spreadsheetId,
-                fallbackItems: payload.items,
-                budget: payload.budget,
-              );
-              if (context.mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Lista "${payload.title}" recebida com sucesso!'), backgroundColor: Colors.green),
-                );
-              }
-            },
-            child: Text('Criar Lista "${payload.title}"'),
-          ),
-        ],
-      ),
-    );
+      );
+    }
   }
 
   Future<void> _connectToSpreadsheet(String rawInput) async {
@@ -414,7 +370,8 @@ class _SharedListPairingSheetState extends State<SharedListPairingSheet>
     // 1. Tenta decodificar como payload direto do CARRIN
     final payload = SharedListService.instance.decodeList(clean);
     if (payload != null) {
-      _showImportConfirmationDialog(context, payload, provider);
+      Navigator.pop(context);
+      await _autoImportAndOpen(context, payload, provider);
       return;
     }
 
@@ -545,7 +502,8 @@ class _SharedListPairingSheetState extends State<SharedListPairingSheet>
                   Navigator.pop(context);
                   final payload = SharedListService.instance.decodeList(code);
                   if (payload != null) {
-                    _showImportConfirmationDialog(context, payload, provider);
+                    Navigator.pop(context);
+                    _autoImportAndOpen(context, payload, provider);
                   } else {
                     _enterLinkController.text = code;
                     _connectToSpreadsheet(code);

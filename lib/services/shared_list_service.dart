@@ -9,12 +9,14 @@ class SharedListPayload {
   final double budget;
   final List<Item> items;
   final String? spreadsheetId; // ID da planilha do Google dedicada a esta lista única
+  final String? syncId; // Identificador universal de sincronização em tempo real (Peer / Nuvem)
 
   const SharedListPayload({
     required this.title,
     required this.budget,
     required this.items,
     this.spreadsheetId,
+    this.syncId,
   });
 }
 
@@ -30,7 +32,12 @@ class SharedListService {
     required double budget,
     required List<Item> items,
     String? spreadsheetId,
+    String? syncId,
   }) {
+    final effectiveSyncId = (syncId != null && syncId.trim().isNotEmpty)
+        ? syncId.trim()
+        : 'c_${DateTime.now().millisecondsSinceEpoch.toRadixString(36)}';
+
     final itemsMap = items.map((it) {
       final map = <String, dynamic>{'n': it.name};
       if (it.quantity != 1.0) map['q'] = it.quantity;
@@ -47,6 +54,7 @@ class SharedListService {
       if (budget > 0.0) 'b': budget,
       'i': itemsMap,
       if (spreadsheetId != null && spreadsheetId.isNotEmpty) 'ss': spreadsheetId,
+      's': effectiveSyncId,
       'mode': 'single_list',
     };
 
@@ -58,7 +66,7 @@ class SharedListService {
   }
 
   /// Codifica a lista atualmente ativa ou selecionada do provider
-  String encodeList(ItemProvider provider, {String? targetMonth, String? spreadsheetId}) {
+  String encodeList(ItemProvider provider, {String? targetMonth, String? spreadsheetId, String? syncId}) {
     final listTitle = targetMonth ?? provider.currentMonth;
     final items = (listTitle == provider.currentMonth)
         ? provider.items
@@ -69,6 +77,7 @@ class SharedListService {
       budget: budget,
       items: items,
       spreadsheetId: spreadsheetId,
+      syncId: syncId,
     );
   }
 
@@ -123,6 +132,7 @@ class SharedListService {
       final title = (data['t'] as String?) ?? 'Lista Compartilhada';
       final budget = (data['b'] as num?)?.toDouble() ?? 0.0;
       final ss = (data['ss'] as String?);
+      final syncId = (data['s'] as String?) ?? (data['sid'] as String?);
 
       final rawItems = data['i'] as List<dynamic>? ?? [];
       final List<Item> items = [];
@@ -146,6 +156,7 @@ class SharedListService {
         budget: budget,
         items: items,
         spreadsheetId: ss,
+        syncId: syncId,
       );
     } catch (_) {
       return null;

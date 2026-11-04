@@ -60,6 +60,10 @@ class _SyncIndicatorState extends State<SyncIndicator> with SingleTickerProvider
       iconColor = Colors.orangeAccent;
       iconData = Icons.cloud_queue_rounded;
       tooltip = '$count alterações pendentes offline';
+    } else if (provider.hasActiveSharedSync) {
+      iconColor = Colors.tealAccent;
+      iconData = Icons.sync_alt_rounded;
+      tooltip = 'Lista Compartilhada sincronizada em tempo real';
     } else {
       iconColor = Colors.green;
       iconData = Icons.cloud_done_rounded;
