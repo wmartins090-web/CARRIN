@@ -71,14 +71,13 @@ class FcmService {
           provisional: false,
         );
 
-        if (settings.authorizationStatus == AuthorizationStatus.authorized ||
-            settings.authorizationStatus == AuthorizationStatus.provisional) {
-          debugPrint('Permissão de Push concedida pelo usuário.');
-
-          // Inscreve automaticamente no tópico de novas versões do CARRIN
+        debugPrint('FCM Status: ${settings.authorizationStatus}');
+        try {
           await messaging.subscribeToTopic(topicAppUpdates);
           await messaging.subscribeToTopic(topicGeneral);
-          debugPrint('Inscrito nos tópicos FCM: $topicAppUpdates e $topicGeneral');
+          debugPrint('Inscrito com sucesso nos topicos FCM: $topicAppUpdates e $topicGeneral');
+        } catch (e) {
+          debugPrint('Aviso ao inscrever nos topicos FCM: $e');
         }
 
         // Ouvinte para mensagens recebidas com o app em primeiro plano (aberto)
