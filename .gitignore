@@ -66,6 +66,8 @@ android/key.properties
 # Secrets & OAuth
 client_secret*.json
 assets/credentials.json
+scripts/*credentials*.json
+scripts/r2_credentials.json
 
 
 # Logs & temp files

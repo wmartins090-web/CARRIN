@@ -120,9 +120,18 @@ Start-Sleep -Seconds 4
 $check = & curl.exe -L -I -s "https://github.com/$repo/releases/download/$tag/$assetName" | Select-String "HTTP/|Content-Type|Content-Length"
 Write-Output $check
 
+# Upload automatico para Cloudflare R2 CDN (Edge rapido e espelho de contingencia)
+Write-Output "`nFazendo upload para Cloudflare R2 (CDN Global sem egress)..."
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$r2Script = Join-Path $scriptDir "upload_to_r2.py"
+if (Test-Path $r2Script) {
+    & python -X utf8 $r2Script -a "$apkPath" -v "$tag"
+} else {
+    Write-Warning "Script upload_to_r2.py nao encontrado em $r2Script"
+}
+
 # Disparo automatico de Notificacao Push via Firebase FCM
 Write-Output "`nDisparando notificacao push FCM para todos os usuarios instalados..."
-$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $fcmScript = Join-Path $scriptDir "send_fcm_notification.py"
 if (Test-Path $fcmScript) {
     $env:PYTHONUTF8 = "1"

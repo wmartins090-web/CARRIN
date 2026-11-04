@@ -78,7 +78,7 @@ class AppUpdateService {
   AppUpdateService._();
   static final AppUpdateService instance = AppUpdateService._();
 
-  static String currentAppVersion = '1.3.616';
+  static String currentAppVersion = '1.3.617';
   static int currentBuildNumber = 613;
 
   /// Inicializa dinamicamente as informações reais do pacote instalado no Android
@@ -92,6 +92,8 @@ class AppUpdateService {
 
   static const MethodChannel _installerChannel = MethodChannel('com.wmartins.carrin/installer');
 
+  static const String r2VersionUrl =
+      'https://pub-4bdefe4ec784476eae543ebde4bd2f20.r2.dev/version.json';
   static const String primaryVersionUrl =
       'https://raw.githubusercontent.com/wmartins090-web/CARRIN/main/version.json';
   static const String fallbackVersionUrl =
@@ -110,6 +112,7 @@ class AppUpdateService {
     final customUrl = prefs.getString(_prefCustomVersionUrlKey);
     final urlsToTry = [
       if (customUrl != null && customUrl.trim().isNotEmpty) customUrl.trim(),
+      r2VersionUrl,
       primaryVersionUrl,
       fallbackVersionUrl,
     ];
@@ -120,7 +123,7 @@ class AppUpdateService {
     for (final url in urlsToTry) {
       try {
         final separator = url.contains('?') ? '&' : '?';
-        final uri = Uri.parse('_cb=');
+        final uri = Uri.parse('$url' + separator + '_cb=' + DateTime.now().millisecondsSinceEpoch.toString());
         final response = await http.get(uri).timeout(const Duration(seconds: 6));
         if (response.statusCode == 200) {
           final decoded = jsonDecode(utf8.decode(response.bodyBytes));
@@ -373,10 +376,23 @@ class AppUpdateService {
     void Function(double progress, int receivedBytes, int totalBytes)? onProgress,
   }) async {
     final client = http.Client();
-    try {
-      final uri = Uri.parse(apkUrl);
-      final request = http.Request('GET', uri);
-      final response = await client.send(request);
+    final List<String> candidateUrls = [apkUrl];
+    final String fileName = apkUrl.split('/').last.split('?').first;
+    if (apkUrl.contains('pub-4bdefe4ec784476eae543ebde4bd2f20.r2.dev')) {
+      final ghTag = version != null ? 'v$version' : 'v$currentAppVersion';
+      candidateUrls.add('https://github.com/wmartins090-web/CARRIN/releases/download/$ghTag/$fileName');
+    } else if (apkUrl.contains('github.com')) {
+      candidateUrls.add('https://pub-4bdefe4ec784476eae543ebde4bd2f20.r2.dev/$fileName');
+    }
+
+    Exception? lastException;
+    for (int attempt = 0; attempt < candidateUrls.length; attempt++) {
+      final currentUrl = candidateUrls[attempt];
+      try {
+        final uri = Uri.parse(currentUrl);
+        final request = http.Request('GET', uri);
+        request.headers['User-Agent'] = 'CARRIN-App/1.0';
+        final response = await client.send(request);
 
       if (response.statusCode != 200 && response.statusCode != 302) {
         throw Exception('Servidor retornou código ${response.statusCode} ao baixar o APK.');
@@ -430,10 +446,15 @@ class AppUpdateService {
       }
       await partFile.rename(apkFile.path);
 
-      return apkFile;
-    } finally {
       client.close();
+      return apkFile;
+      } catch (e) {
+        debugPrint('Tentativa $attempt falhou para $currentUrl: $e');
+        lastException = e is Exception ? e : Exception(e.toString());
+      }
     }
+    client.close();
+    throw lastException ?? Exception('Falha ao baixar o arquivo APK em todas as fontes disponíveis.');
   }
 
   /// Checa se a versão A é maior que a versão B semanticamente (ex: 1.3.566 > 1.3.565)
