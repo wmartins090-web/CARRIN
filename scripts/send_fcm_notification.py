@@ -65,6 +65,10 @@ def send_fcm_notification(version, title, body, build_number=None, topic="novas_
     payload = {
         "message": {
             "topic": topic,
+            "notification": {
+                "title": notification_title,
+                "body": notification_body
+            },
             "data": {
                 "click_action": "FLUTTER_NOTIFICATION_CLICK",
                 "version": clean_version,
@@ -74,6 +78,13 @@ def send_fcm_notification(version, title, body, build_number=None, topic="novas_
             },
             "android": {
                 "priority": "HIGH",
+                "notification": {
+                    "channel_id": "app_updates_v1",
+                    "click_action": "FLUTTER_NOTIFICATION_CLICK",
+                    "notification_priority": "PRIORITY_MAX",
+                    "default_sound": True,
+                    "default_vibrate_timings": True
+                }
             }
         }
     }
