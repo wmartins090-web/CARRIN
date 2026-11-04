@@ -2219,93 +2219,17 @@ if (_isMarketLocked)
                           onSubmitted: (_) => qtyFocusNode.requestFocus(),
                           keyboardType: TextInputType.number,
                           inputFormatters: [CurrencyInputFormatter()],
-                          style: TextStyle(color: Theme.of(context).brightness == Brightness.dark ? Colors.white : Colors.black), 
-                          decoration: InputDecoration(
-                            labelText: 'Preço Unit.', 
+                          style: TextStyle(
+                            fontSize: 16,
+                            color: Theme.of(context).brightness == Brightness.dark ? Colors.white : Colors.black,
+                          ), 
+                          decoration: const InputDecoration(
+                            labelText: 'Preço', 
                             hintText: '0,00', 
                             prefixText: 'R\$ ', 
-                            prefixStyle: const TextStyle(fontSize: 16), 
+                            prefixStyle: TextStyle(fontSize: 16), 
                             floatingLabelBehavior: FloatingLabelBehavior.always,
-                            suffixIcon: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                IconButton(
-                                  icon: const Icon(Icons.sell_outlined, size: 19, color: Color(0xFF10B981)),
-                                  tooltip: 'Ler Etiqueta de Gôndola',
-                                  onPressed: () async {
-                                    try {
-                                      final picker = ImagePicker();
-                                      final image = await picker.pickImage(
-                                        source: ImageSource.camera,
-                                        preferredCameraDevice: CameraDevice.rear,
-                                      );
-                                      if (image == null) return;
-
-                                      final recognizer = TextRecognizer(script: TextRecognitionScript.latin);
-                                      final inputImage = InputImage.fromFilePath(image.path);
-                                      final recognizedText = await recognizer.processImage(inputImage);
-                                      await recognizer.close();
-
-                                      final result = ShelfTagParser.parse(recognizedText.text);
-                                      if (!result.hasAnyPrice) {
-                                        if (dialogContext.mounted) {
-                                          ScaffoldMessenger.of(dialogContext).showSnackBar(
-                                            const SnackBar(
-                                              content: Text('Nenhum preço nítido encontrado na foto da etiqueta.'),
-                                              backgroundColor: Colors.orange,
-                                            ),
-                                          );
-                                        }
-                                        return;
-                                      }
-
-                                      if (dialogContext.mounted) {
-                                        await ShelfTagSelectionSheet.show(
-                                          dialogContext,
-                                          tagResult: result,
-                                          onPriceSelected: (selectedPrice, prodName, barcode) {
-                                            setState(() {
-                                              priceController.text = Utils.formatCurrencyInput(selectedPrice.price);
-                                              priceController.selection = TextSelection.collapsed(offset: priceController.text.length);
-                                              if (selectedPrice.minQuantity != null && selectedPrice.minQuantity! > 1) {
-                                                qtyController.text = selectedPrice.minQuantity.toString();
-                                                qtyController.selection = TextSelection.collapsed(offset: qtyController.text.length);
-                                              }
-                                              if (prodName != null && prodName.isNotEmpty && nameController.text.trim().isEmpty) {
-                                                nameController.text = prodName;
-                                                nameController.selection = TextSelection.collapsed(offset: prodName.length);
-                                              }
-                                              if (barcode != null && barcode.isNotEmpty && barcodeController.text.trim().isEmpty) {
-                                                currentBarcode = barcode;
-                                                barcodeController.text = barcode;
-                                                barcodeController.selection = TextSelection.collapsed(offset: barcode.length);
-                                              }
-                                              activeRetailPrice = result.retailPrice?.price;
-                                              activeWholesalePrice = result.wholesalePrice?.price;
-                                              activeWholesaleMinQty = result.wholesalePrice?.minQuantity;
-                                            });
-                                          },
-                                        );
-                                      }
-                                    } catch (e) {
-                                      debugPrint('Erro ao ler etiqueta no diálogo: $e');
-                                    }
-                                  },
-                                ),
-                                IconButton(
-                                  icon: const Icon(Icons.calculate_outlined, size: 20),
-                                  tooltip: 'Calculadora',
-                                  onPressed: () {
-                                    FloatingCalculatorPopup.show(context, onUseValue: (val) {
-                                      setState(() {
-                                        priceController.text = Utils.formatCurrencyInput(val);
-                                        priceController.selection = TextSelection.collapsed(offset: priceController.text.length);
-                                      });
-                                    });
-                                  },
-                                ),
-                              ],
-                            ),
+                            border: UnderlineInputBorder(),
                           ), 
                         ),
                       ),
