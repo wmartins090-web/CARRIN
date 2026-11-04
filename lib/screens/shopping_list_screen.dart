@@ -36,6 +36,10 @@ import '../widgets/market_and_purpose_widgets.dart';
 import 'barcode_scanner_screen.dart';
 import 'receipt_scanner_screen.dart';
 import '../services/barcode_lookup_service.dart';
+import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
+import 'package:image_picker/image_picker.dart';
+import '../services/shelf_tag_parser.dart';
+import '../widgets/shelf_tag_selection_sheet.dart';
 
 /// The main shopping list view for a specific month.
 /// 
@@ -1052,6 +1056,50 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> with SingleTick
                       );
                       return;
                     }
+                    if (result.startsWith('__ACTION_SHELF_TAG__:')) {
+                      final payloadStr = result.substring('__ACTION_SHELF_TAG__:'.length);
+                      final map = jsonDecode(payloadStr) as Map<String, dynamic>;
+                      final name = map['name'] as String?;
+                      final barcode = map['barcode'] as String?;
+                      final price = (map['price'] as num?)?.toDouble();
+                      final quantity = (map['quantity'] as num?)?.toDouble() ?? 1.0;
+                      final retailPrice = (map['retailPrice'] as num?)?.toDouble();
+                      final wholesalePrice = (map['wholesalePrice'] as num?)?.toDouble();
+                      final wholesaleMinQty = map['wholesaleMinQty'] as int?;
+
+                      Item? matchedItem;
+                      if (barcode != null && barcode.isNotEmpty) {
+                        for (var it in itemProvider.items) {
+                          if (Item.parseBarcode(it.barcode) == barcode) {
+                            matchedItem = it;
+                            break;
+                          }
+                        }
+                      }
+                      if (matchedItem == null && name != null && name.isNotEmpty) {
+                        final normName = Utils.normalize(name);
+                        for (var it in itemProvider.items) {
+                          if (Utils.normalize(it.name) == normName) {
+                            matchedItem = it;
+                            break;
+                          }
+                        }
+                      }
+
+                      if (!context.mounted) return;
+                      _showEditDialog(
+                        context,
+                        matchedItem,
+                        scannedBarcode: barcode,
+                        prefilledName: name,
+                        prefilledPrice: price,
+                        prefilledQuantity: quantity,
+                        tagRetailPrice: retailPrice,
+                        tagWholesalePrice: wholesalePrice,
+                        tagWholesaleMinQty: wholesaleMinQty,
+                      );
+                      return;
+                    }
                     final trimmed = result.trim();
                     if (trimmed.isEmpty) return;
 
@@ -1845,6 +1893,10 @@ if (_isMarketLocked)
     String? prefilledName, 
     String? prefilledCategory,
     double? prefilledPrice,
+    double? prefilledQuantity,
+    double? tagRetailPrice,
+    double? tagWholesalePrice,
+    int? tagWholesaleMinQty,
     bool lookupOnlineOnOpen = false,
   }) {
     final provider = Provider.of<ItemProvider>(context, listen: false);
@@ -1862,7 +1914,13 @@ if (_isMarketLocked)
             : (productFromBc != null && (productFromBc['price'] as num) > 0 ? Utils.formatCurrencyInput((productFromBc['price'] as num).toDouble()) : '');
     final nameController = TextEditingController(text: initialName);
     final priceController = TextEditingController(text: initialPrice);
-    final qtyController = TextEditingController(text: activeItem != null ? ((activeItem.quantity != 0) ? Utils.formatNumber(activeItem.quantity) : '') : '1');
+    final initialQty = (prefilledQuantity != null && prefilledQuantity > 0)
+        ? Utils.formatNumber(prefilledQuantity)
+        : (activeItem != null ? ((activeItem.quantity != 0) ? Utils.formatNumber(activeItem.quantity) : '') : '1');
+    final qtyController = TextEditingController(text: initialQty);
+    double? activeRetailPrice = tagRetailPrice;
+    double? activeWholesalePrice = tagWholesalePrice;
+    int? activeWholesaleMinQty = tagWholesaleMinQty;
     bool isKg = activeItem?.isKg ?? (productFromBc?['isKg'] ?? false);
     String category = activeItem?.category ?? prefilledCategory ?? (productFromBc?['category'] ?? (initialName.isNotEmpty ? ItemProvider.suggestCategoryForName(initialName) : 'Mercearia'));
     
@@ -2168,17 +2226,85 @@ if (_isMarketLocked)
                             prefixText: 'R\$ ', 
                             prefixStyle: const TextStyle(fontSize: 16), 
                             floatingLabelBehavior: FloatingLabelBehavior.always,
-                            suffixIcon: IconButton(
-                              icon: const Icon(Icons.calculate_outlined, size: 20),
-                              tooltip: 'Calculadora',
-                              onPressed: () {
-                                FloatingCalculatorPopup.show(context, onUseValue: (val) {
-                                  setState(() {
-                                    priceController.text = Utils.formatCurrencyInput(val);
-                                    priceController.selection = TextSelection.collapsed(offset: priceController.text.length);
-                                  });
-                                });
-                              },
+                            suffixIcon: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                IconButton(
+                                  icon: const Icon(Icons.sell_outlined, size: 19, color: Color(0xFF10B981)),
+                                  tooltip: 'Ler Etiqueta de Gôndola',
+                                  onPressed: () async {
+                                    try {
+                                      final picker = ImagePicker();
+                                      final image = await picker.pickImage(
+                                        source: ImageSource.camera,
+                                        preferredCameraDevice: CameraDevice.rear,
+                                      );
+                                      if (image == null) return;
+
+                                      final recognizer = TextRecognizer(script: TextRecognitionScript.latin);
+                                      final inputImage = InputImage.fromFilePath(image.path);
+                                      final recognizedText = await recognizer.processImage(inputImage);
+                                      await recognizer.close();
+
+                                      final result = ShelfTagParser.parse(recognizedText.text);
+                                      if (!result.hasAnyPrice) {
+                                        if (dialogContext.mounted) {
+                                          ScaffoldMessenger.of(dialogContext).showSnackBar(
+                                            const SnackBar(
+                                              content: Text('Nenhum preço nítido encontrado na foto da etiqueta.'),
+                                              backgroundColor: Colors.orange,
+                                            ),
+                                          );
+                                        }
+                                        return;
+                                      }
+
+                                      if (dialogContext.mounted) {
+                                        await ShelfTagSelectionSheet.show(
+                                          dialogContext,
+                                          tagResult: result,
+                                          onPriceSelected: (selectedPrice, prodName, barcode) {
+                                            setState(() {
+                                              priceController.text = Utils.formatCurrencyInput(selectedPrice.price);
+                                              priceController.selection = TextSelection.collapsed(offset: priceController.text.length);
+                                              if (selectedPrice.minQuantity != null && selectedPrice.minQuantity! > 1) {
+                                                qtyController.text = selectedPrice.minQuantity.toString();
+                                                qtyController.selection = TextSelection.collapsed(offset: qtyController.text.length);
+                                              }
+                                              if (prodName != null && prodName.isNotEmpty && nameController.text.trim().isEmpty) {
+                                                nameController.text = prodName;
+                                                nameController.selection = TextSelection.collapsed(offset: prodName.length);
+                                              }
+                                              if (barcode != null && barcode.isNotEmpty && barcodeController.text.trim().isEmpty) {
+                                                currentBarcode = barcode;
+                                                barcodeController.text = barcode;
+                                                barcodeController.selection = TextSelection.collapsed(offset: barcode.length);
+                                              }
+                                              activeRetailPrice = result.retailPrice?.price;
+                                              activeWholesalePrice = result.wholesalePrice?.price;
+                                              activeWholesaleMinQty = result.wholesalePrice?.minQuantity;
+                                            });
+                                          },
+                                        );
+                                      }
+                                    } catch (e) {
+                                      debugPrint('Erro ao ler etiqueta no diálogo: $e');
+                                    }
+                                  },
+                                ),
+                                IconButton(
+                                  icon: const Icon(Icons.calculate_outlined, size: 20),
+                                  tooltip: 'Calculadora',
+                                  onPressed: () {
+                                    FloatingCalculatorPopup.show(context, onUseValue: (val) {
+                                      setState(() {
+                                        priceController.text = Utils.formatCurrencyInput(val);
+                                        priceController.selection = TextSelection.collapsed(offset: priceController.text.length);
+                                      });
+                                    });
+                                  },
+                                ),
+                              ],
                             ),
                           ), 
                         ),
@@ -2197,6 +2323,74 @@ if (_isMarketLocked)
                       ),
                     ],
                   ),
+                  if (activeRetailPrice != null && activeWholesalePrice != null) ...[
+                    const SizedBox(height: 10),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).brightness == Brightness.dark
+                            ? const Color(0xFF1E293B)
+                            : const Color(0xFFF1F5F9),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: const Color(0xFF10B981).withValues(alpha: 0.3)),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.sell_rounded, size: 16, color: Color(0xFF10B981)),
+                          const SizedBox(width: 6),
+                          const Text('Etiqueta:', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.grey)),
+                          const Spacer(),
+                          InkWell(
+                            onTap: () {
+                              setState(() {
+                                priceController.text = Utils.formatCurrencyInput(activeRetailPrice!);
+                                priceController.selection = TextSelection.collapsed(offset: priceController.text.length);
+                              });
+                            },
+                            borderRadius: BorderRadius.circular(8),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: Colors.blue.withValues(alpha: 0.15),
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(color: Colors.blue.withValues(alpha: 0.4)),
+                              ),
+                              child: Text(
+                                'Varejo ${Utils.formatCurrency(activeRetailPrice!)}',
+                                style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.blue),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          InkWell(
+                            onTap: () {
+                              setState(() {
+                                priceController.text = Utils.formatCurrencyInput(activeWholesalePrice!);
+                                priceController.selection = TextSelection.collapsed(offset: priceController.text.length);
+                                if (activeWholesaleMinQty != null && activeWholesaleMinQty! > 1) {
+                                  qtyController.text = activeWholesaleMinQty.toString();
+                                  qtyController.selection = TextSelection.collapsed(offset: qtyController.text.length);
+                                }
+                              });
+                            },
+                            borderRadius: BorderRadius.circular(8),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF10B981).withValues(alpha: 0.18),
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(color: const Color(0xFF10B981).withValues(alpha: 0.5)),
+                              ),
+                              child: Text(
+                                'Atacado ${Utils.formatCurrency(activeWholesalePrice!)} (${activeWholesaleMinQty ?? 3}+)',
+                                style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF10B981)),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 16),
                   SwitchListTile(
                     contentPadding: EdgeInsets.zero,

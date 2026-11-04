@@ -1,6 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:vibration/vibration.dart';
+import 'dart:convert';
+import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
+import 'package:image_picker/image_picker.dart';
+import '../services/shelf_tag_parser.dart';
+import '../widgets/shelf_tag_selection_sheet.dart';
 
 const Color _emeraldColor = Color(0xFF10B981);
 
@@ -126,6 +131,85 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen>
         ],
       ),
     );
+  }
+
+  Future<void> _scanShelfTag() async {
+    try {
+      final picker = ImagePicker();
+      final image = await picker.pickImage(
+        source: ImageSource.camera,
+        preferredCameraDevice: CameraDevice.rear,
+      );
+      if (image == null) return;
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Row(
+            children: [
+              SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+              ),
+              SizedBox(width: 12),
+              Text('Analisando etiqueta de gôndola...'),
+            ],
+          ),
+          duration: Duration(seconds: 4),
+          backgroundColor: Color(0xFF0F172A),
+        ),
+      );
+
+      final recognizer = TextRecognizer(script: TextRecognitionScript.latin);
+      final inputImage = InputImage.fromFilePath(image.path);
+      final recognizedText = await recognizer.processImage(inputImage);
+      await recognizer.close();
+
+      final result = ShelfTagParser.parse(recognizedText.text);
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+
+      if (!result.hasAnyPrice) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Nenhum preço nítido encontrado na foto. Aproxime a câmera da etiqueta da gôndola.'),
+            backgroundColor: Colors.orange,
+            duration: Duration(seconds: 4),
+          ),
+        );
+        return;
+      }
+
+      await ShelfTagSelectionSheet.show(
+        context,
+        tagResult: result,
+        onPriceSelected: (selectedPrice, prodName, barcode) {
+          final payload = jsonEncode({
+            'name': prodName,
+            'barcode': barcode,
+            'price': selectedPrice.price,
+            'quantity': selectedPrice.minQuantity ?? 1,
+            'isWholesale': selectedPrice.isWholesale,
+            'label': selectedPrice.label,
+            'retailPrice': result.retailPrice?.price,
+            'wholesalePrice': result.wholesalePrice?.price,
+            'wholesaleMinQty': result.wholesalePrice?.minQuantity,
+          });
+          Navigator.pop(context, '__ACTION_SHELF_TAG__:' + payload);
+        },
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Erro ao analisar etiqueta: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   @override
@@ -299,6 +383,24 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen>
                           label: const Text(
                             'Cupom Fiscal',
                             style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        TextButton.icon(
+                          style: TextButton.styleFrom(
+                            backgroundColor: const Color(0xFF10B981).withValues(alpha: 0.22),
+                            foregroundColor: const Color(0xFF6EE7B7),
+                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(24),
+                              side: const BorderSide(color: Color(0xFF10B981), width: 1.2),
+                            ),
+                          ),
+                          onPressed: _scanShelfTag,
+                          icon: const Icon(Icons.sell_outlined, size: 18, color: Color(0xFF6EE7B7)),
+                          label: const Text(
+                            'Etiqueta Gôndola',
+                            style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold),
                           ),
                         ),
                         const SizedBox(width: 8),

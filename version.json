@@ -1,16 +1,16 @@
 {
-  "version": "1.3.617",
-  "build_number": 617,
+  "version": "1.3.618",
+  "build_number": 618,
   "release_date": "2026-11-04",
-  "title": "CARRIN v1.3.617",
+  "title": "CARRIN v1.3.618",
   "release_notes": [
-    "Hospedagem em nuvem de alta velocidade Cloudflare R2 com CDN em São Paulo e tráfego ilimitado",
-    "Espelhamento duplo: download automático pelo Cloudflare R2 com contingência no GitHub",
-    "Animação em cascata ativada na lista de produtos do carrinho ao entrar, ordenar ou filtrar",
-    "Escaneamento de Cupom Fiscal NFC-e direto pela câmera de produtos"
+    "Leitura inteligente de Etiquetas de Gôndola (Atacado x Varejo): escolha qual preço colocar no carrinho com 1 toque",
+    "Detecção de descontos de atacado e quantidades mínimas na prateleira",
+    "Alternador rápido de preços no diálogo de edição do produto",
+    "Hospedagem de alta velocidade Cloudflare R2 com CDN e tráfego ilimitado"
   ],
-  "apk_url": "https://pub-4bdefe4ec784476eae543ebde4bd2f20.r2.dev/carrin_v1.3.617.apk",
-  "size_bytes": 121349622,
+  "apk_url": "https://pub-4bdefe4ec784476eae543ebde4bd2f20.r2.dev/carrin_v1.3.618.apk",
+  "size_bytes": 121513738,
   "is_active": true,
   "force_update": false
 }
