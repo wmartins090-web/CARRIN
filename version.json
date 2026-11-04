@@ -1,15 +1,15 @@
 {
-  "version": "1.3.618",
-  "build_number": 618,
+  "version": "1.3.619",
+  "build_number": 619,
   "release_date": "2026-11-04",
-  "title": "CARRIN v1.3.618",
+  "title": "CARRIN v1.3.619",
   "release_notes": [
-    "Leitura inteligente de Etiquetas de Gôndola (Atacado x Varejo): escolha qual preço colocar no carrinho com 1 toque",
+    "Correção: popup de atualização estabilizado pós-abertura sem fechamento automático",
+    "Leitura inteligente de Etiquetas de Gôndola (Atacado x Varejo): escolha qual preço colocar no carrinho",
     "Detecção de descontos de atacado e quantidades mínimas na prateleira",
-    "Alternador rápido de preços no diálogo de edição do produto",
     "Hospedagem de alta velocidade Cloudflare R2 com CDN e tráfego ilimitado"
   ],
-  "apk_url": "https://pub-4bdefe4ec784476eae543ebde4bd2f20.r2.dev/carrin_v1.3.618.apk",
+  "apk_url": "https://pub-4bdefe4ec784476eae543ebde4bd2f20.r2.dev/carrin_v1.3.619.apk",
   "size_bytes": 121513738,
   "is_active": true,
   "force_update": false

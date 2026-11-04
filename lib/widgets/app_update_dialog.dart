@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../services/app_update_service.dart';
 import '../services/notification_service.dart';
+import '../screens/main_screen.dart';
 
 /// Modal compacto e amigável de instalação para o usuário final
 class AppUpdateDialog extends StatefulWidget {
@@ -15,33 +16,41 @@ class AppUpdateDialog extends StatefulWidget {
     this.autoStartDownload = false,
   });
 
+  static bool isShowing = false;
+
   static Future<void> show(
     BuildContext context,
     AppUpdateInfo info, {
     String? readyApkPath,
     bool autoStartDownload = false,
-  }) {
-    return showGeneralDialog(
-      context: context,
-      barrierDismissible: !info.forceUpdate,
-      barrierLabel: '',
-      transitionDuration: const Duration(milliseconds: 300),
-      pageBuilder: (context, anim1, anim2) => AppUpdateDialog(
-        updateInfo: info,
-        readyApkPath: readyApkPath,
-        autoStartDownload: autoStartDownload,
-      ),
-      transitionBuilder: (context, anim1, anim2, child) {
-        final curve = Curves.easeOutBack.transform(anim1.value);
-        return Transform.scale(
-          scale: curve,
-          child: Opacity(
-            opacity: anim1.value,
-            child: child,
-          ),
-        );
-      },
-    );
+  }) async {
+    if (isShowing) return;
+    isShowing = true;
+    try {
+      await showGeneralDialog(
+        context: context,
+        barrierDismissible: false, // Não fecha sozinho ao tocar fora acidentalmente
+        barrierLabel: 'Fechar atualização',
+        transitionDuration: const Duration(milliseconds: 300),
+        pageBuilder: (context, anim1, anim2) => AppUpdateDialog(
+          updateInfo: info,
+          readyApkPath: readyApkPath,
+          autoStartDownload: autoStartDownload,
+        ),
+        transitionBuilder: (context, anim1, anim2, child) {
+          final curve = Curves.easeOutBack.transform(anim1.value);
+          return Transform.scale(
+            scale: curve,
+            child: Opacity(
+              opacity: anim1.value,
+              child: child,
+            ),
+          );
+        },
+      );
+    } finally {
+      isShowing = false;
+    }
   }
 
   /// Atalho para exibir o diálogo com o arquivo APK já baixado e pronto
@@ -55,14 +64,20 @@ class AppUpdateDialog extends StatefulWidget {
     String? targetVersion,
     int? targetBuildNumber,
   }) async {
-    BuildContext? ctx = appNavigatorKey.currentContext;
-    if (ctx == null) {
-      for (int i = 0; i < 15; i++) {
-        await Future.delayed(const Duration(milliseconds: 200));
-        ctx = appNavigatorKey.currentContext;
-        if (ctx != null) break;
+    if (isShowing) return;
+
+    // Aguarda o MainScreen estar totalmente montado para não ser fechado pela transição do SplashScreen
+    for (int i = 0; i < 30; i++) {
+      if (MainScreen.isReady && appNavigatorKey.currentContext != null) {
+        break;
       }
+      await Future.delayed(const Duration(milliseconds: 150));
     }
+
+    // Intervalo de segurança para estabilização de rota pós-Splash
+    await Future.delayed(const Duration(milliseconds: 350));
+
+    BuildContext? ctx = appNavigatorKey.currentContext;
     if (ctx == null) return;
 
     AppUpdateInfo? info = await AppUpdateService.instance.checkForUpdate(ignoreDismissed: true);
@@ -77,7 +92,7 @@ class AppUpdateDialog extends StatefulWidget {
         releaseDate: DateTime.now().toIso8601String(),
         title: 'CARRIN v$cleanV',
         releaseNotes: ['Atualização com melhorias de estabilidade e novas funções'],
-        apkUrl: 'https://github.com/wmartins090-web/CARRIN/releases/download/v$cleanV/carrin_v$cleanV.apk',
+        apkUrl: 'https://pub-4bdefe4ec784476eae543ebde4bd2f20.r2.dev/carrin_v$cleanV.apk',
       );
     }
 

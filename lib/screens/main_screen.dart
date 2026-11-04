@@ -13,6 +13,7 @@ import '../widgets/app_update_dialog.dart';
 
 class MainScreen extends StatefulWidget {
   static final ValueNotifier<int> activeTabNotifier = ValueNotifier<int>(0);
+  static bool isReady = false;
   const MainScreen({super.key});
 
   @override
@@ -58,6 +59,7 @@ class MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
+    MainScreen.isReady = true;
     WidgetsBinding.instance.addObserver(this);
     _pageController = PageController(initialPage: _currentIndex);
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -78,7 +80,7 @@ class MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
             AppUpdateService.instance.downloadInBackground(
               info,
               onReady: (readyInfo, apkPath) {
-                if (mounted) {
+                if (mounted && !AppUpdateDialog.isShowing) {
                   AppUpdateDialog.showReady(context, readyInfo, apkPath);
                 }
               },
@@ -101,6 +103,7 @@ class MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    MainScreen.isReady = false;
     _tutorialSettleTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     _pageController.dispose();
