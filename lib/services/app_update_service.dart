@@ -124,7 +124,7 @@ class AppUpdateService {
       try {
         final separator = url.contains('?') ? '&' : '?';
         final uri = Uri.parse('$url' + separator + '_cb=' + DateTime.now().millisecondsSinceEpoch.toString());
-        final response = await http.get(uri).timeout(const Duration(seconds: 6));
+        final response = await http.get(uri, headers: {'User-Agent': 'CARRIN-App/1.0'}).timeout(const Duration(seconds: 6));
         if (response.statusCode == 200) {
           final decoded = jsonDecode(utf8.decode(response.bodyBytes));
           if (decoded is Map<String, dynamic>) {
