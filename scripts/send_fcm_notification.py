@@ -80,6 +80,8 @@ def send_fcm_notification(version, title, body, build_number=None, topic="novas_
                 "notification": {
                     "channel_id": "app_updates_v1",
                     "notification_priority": "PRIORITY_MAX",
+                    "icon": "ic_notification_cart",
+                    "color": "#10B981",
                     "default_sound": True,
                     "default_vibrate_timings": True
                 }
