@@ -1566,7 +1566,7 @@ class DatabaseHelper {
                   ) ??
                   0;
               final rawItems = data['items'];
-              if (currentCount == 0 && rawItems is List && rawItems.isNotEmpty) {
+              if (rawItems is List && rawItems.isNotEmpty && currentCount < rawItems.length) {
                 final mData = data['month'] is Map<String, dynamic>
                     ? data['month'] as Map<String, dynamic>
                     : <String, dynamic>{};
@@ -1586,13 +1586,23 @@ class DatabaseHelper {
                   conflictAlgorithm: ConflictAlgorithm.ignore,
                 );
 
-                final restoredItems = <Item>[];
-                int idx = 7;
+                final existingDbItems = await getItems(title);
+                final existingNames = existingDbItems.map((e) => Utils.normalize(e.name)).toSet();
+
+                final restoredItems = List<Item>.from(existingDbItems);
+                int idx = restoredItems.isEmpty
+                    ? 7
+                    : (restoredItems.map((e) => e.index ?? 0).fold<int>(0, (a, b) => a > b ? a : b) + 1);
+
                 for (final raw in rawItems) {
                   if (raw is Map) {
+                    final name = (raw['name'] as String?) ?? '';
+                    if (name.isEmpty || existingNames.contains(Utils.normalize(name))) {
+                      continue;
+                    }
                     restoredItems.add(Item(
                       index: (raw['index_in_sheet'] as int?) ?? idx++,
-                      name: (raw['name'] as String?) ?? '',
+                      name: name,
                       quantity: (raw['quantity'] as num?)?.toDouble() ?? 1.0,
                       unitPrice: (raw['unit_price'] as num?)?.toDouble() ?? 0.0,
                       isKg: raw['is_kg'] == 1 || raw['is_kg'] == true,
@@ -1603,9 +1613,9 @@ class DatabaseHelper {
                     ));
                   }
                 }
-                if (restoredItems.isNotEmpty) {
+                if (restoredItems.length > existingDbItems.length) {
                   await saveItems(title, restoredItems);
-                  debugPrint('♻️ DatabaseHelper: Restaurados ${restoredItems.length} itens do mês "$title" via local_backup_carts_v1');
+                  debugPrint('♻️ DatabaseHelper: Restaurados ${restoredItems.length - existingDbItems.length} itens do mês "$title" via local_backup_carts_v1');
                 }
               }
             }
@@ -1688,7 +1698,7 @@ class DatabaseHelper {
               ) ??
               0;
 
-          if (existingCount == 0) {
+          if (existingCount < itemsMap.length) {
             final budget = (savedQuickMonth == monthTitle && savedQuickBudget > 0) ? savedQuickBudget : 0.0;
             await db.insert(
               'months',
@@ -1706,13 +1716,20 @@ class DatabaseHelper {
               conflictAlgorithm: ConflictAlgorithm.ignore,
             );
 
-            final List<Item> reconstructed = [];
-            int idx = 7;
+            final existingDbItems = await getItems(monthTitle);
+            final existingNames = existingDbItems.map((e) => Utils.normalize(e.name)).toSet();
+            final restoredItems = List<Item>.from(existingDbItems);
+            int idx = restoredItems.isEmpty
+                ? 7
+                : (restoredItems.map((e) => e.index ?? 0).fold<int>(0, (a, b) => a > b ? a : b) + 1);
+
             for (final itData in itemsMap.values) {
+              final name = itData['name'] as String;
+              if (name.isEmpty || existingNames.contains(Utils.normalize(name))) continue;
               final price = (itData['price'] as num?)?.toDouble() ?? 0.0;
-              reconstructed.add(Item(
+              restoredItems.add(Item(
                 index: idx++,
-                name: itData['name'] as String,
+                name: name,
                 quantity: 1.0,
                 unitPrice: price,
                 isKg: false,
@@ -1722,8 +1739,10 @@ class DatabaseHelper {
                 supermarket: itData['supermarket'] as String?,
               ));
             }
-            await saveItems(monthTitle, reconstructed);
-            debugPrint('♻️ DatabaseHelper: Reconstruídos ${reconstructed.length} itens do mês "$monthTitle" via cache_price_history_v2');
+            if (restoredItems.length > existingDbItems.length) {
+              await saveItems(monthTitle, restoredItems);
+              debugPrint('♻️ DatabaseHelper: Reconstruídos ${restoredItems.length - existingDbItems.length} itens do mês "$monthTitle" via cache_price_history_v2');
+            }
           }
         }
       } catch (e) {

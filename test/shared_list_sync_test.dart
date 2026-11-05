@@ -76,5 +76,18 @@ void main() {
       expect(decoded.syncId, isNotNull);
       expect(decoded.syncId!.startsWith('c_'), isTrue);
     });
+
+    test('empty list payload decodes properly with 0 items without throwing', () {
+      final encoded = SharedListService.instance.encodeSingleList(
+        title: 'Reposição de feira',
+        budget: 0.0,
+        items: [],
+      );
+
+      final decoded = SharedListService.instance.decodeList(encoded);
+      expect(decoded, isNotNull);
+      expect(decoded!.title, equals('Reposição de feira'));
+      expect(decoded.items, isEmpty);
+    });
   });
 }

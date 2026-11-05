@@ -40,6 +40,7 @@ class SharedListPairingSheet extends StatefulWidget {
     return showModalBottomSheet(
       context: context,
       isScrollControlled: true,
+      useSafeArea: true,
       backgroundColor: Colors.transparent,
       builder: (_) => SharedListPairingSheet(
         listName: listName,
@@ -394,8 +395,13 @@ class _SharedListPairingSheetState extends State<SharedListPairingSheet>
 
     final String qrData = _carrinPayloadUri;
 
-    return Container(
-      decoration: BoxDecoration(
+    final systemBottomPadding = MediaQuery.of(context).padding.bottom;
+    final keyboardPadding = MediaQuery.of(context).viewInsets.bottom;
+
+    return SafeArea(
+      top: false,
+      child: Container(
+        decoration: BoxDecoration(
         color: cardColor,
         borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
         boxShadow: [
@@ -410,7 +416,7 @@ class _SharedListPairingSheetState extends State<SharedListPairingSheet>
         top: 14,
         left: 18,
         right: 18,
-        bottom: MediaQuery.of(context).viewInsets.bottom + 24,
+        bottom: keyboardPadding + (systemBottomPadding > 0 ? systemBottomPadding : 16) + 16,
       ),
       child: SingleChildScrollView(
         child: Column(
@@ -618,6 +624,7 @@ class _SharedListPairingSheetState extends State<SharedListPairingSheet>
             ],
           ),
         ],
+      ),
       ),
     ),
   );

@@ -246,10 +246,11 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
               width: 1.2,
             ),
           ),
-          insetPadding: const EdgeInsets.symmetric(horizontal: 22, vertical: 24),
-          child: Padding(
-            padding: const EdgeInsets.all(22),
-            child: Column(
+          insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+          child: SingleChildScrollView(
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
@@ -604,6 +605,7 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
                   ),
               ],
             ),
+          ),
           ),
         ),
       ),

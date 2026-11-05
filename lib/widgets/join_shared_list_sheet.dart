@@ -1,14 +1,20 @@
+import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:nfc_manager/ndef_record.dart';
+import 'package:nfc_manager/nfc_manager.dart';
+import 'package:nfc_manager/nfc_manager_android.dart' as android_nfc;
+import 'package:nfc_manager/nfc_manager_ios.dart' as ios_nfc;
 import 'package:provider/provider.dart';
 import 'package:vibration/vibration.dart';
 import '../providers/item_provider.dart';
 import '../services/shared_list_service.dart';
 import '../screens/shopping_list_screen.dart';
 
-/// Modal bottom sheet para entrar na lista compartilhada de outra pessoa
-/// diretamente via QR Code com a câmera ou colando o link/código.
+/// Modal para entrar na lista compartilhada de outra pessoa
+/// com suporte completo a QR Code (câmera), Aproximação NFC e Link direto.
 class JoinSharedListSheet extends StatefulWidget {
   const JoinSharedListSheet({super.key});
 
@@ -16,6 +22,7 @@ class JoinSharedListSheet extends StatefulWidget {
     return showModalBottomSheet(
       context: context,
       isScrollControlled: true,
+      useSafeArea: true,
       backgroundColor: Colors.transparent,
       builder: (_) => const JoinSharedListSheet(),
     );
@@ -30,10 +37,135 @@ class _JoinSharedListSheetState extends State<JoinSharedListSheet> {
   bool _isLoading = false;
   String? _errorMessage;
 
+  bool _isNfcAvailable = false;
+  bool _isNfcListening = false;
+  String _nfcStatus = 'Aproxime o aparelho ou tag NFC';
+
+  @override
+  void initState() {
+    super.initState();
+    _checkAndStartNfc();
+  }
+
   @override
   void dispose() {
+    _stopNfc();
     _linkController.dispose();
     super.dispose();
+  }
+
+  Future<void> _checkAndStartNfc() async {
+    try {
+      final avail = await NfcManager.instance.checkAvailability();
+      if (mounted) {
+        setState(() {
+          _isNfcAvailable = (avail == NfcAvailability.enabled);
+        });
+        if (_isNfcAvailable) {
+          _startNfcListening();
+        }
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() => _isNfcAvailable = false);
+      }
+    }
+  }
+
+  void _stopNfc() {
+    try {
+      NfcManager.instance.stopSession();
+    } catch (_) {}
+    if (mounted) {
+      setState(() => _isNfcListening = false);
+    }
+  }
+
+  String? _extractTextFromNdef(NdefMessage message) {
+    for (final record in message.records) {
+      try {
+        if (record.typeNameFormat == TypeNameFormat.wellKnown &&
+            record.type.length == 1 &&
+            record.type[0] == 0x55) {
+          final prefixCode = record.payload.isNotEmpty ? record.payload[0] : 0;
+          final body = record.payload.length > 1
+              ? utf8.decode(record.payload.sublist(1), allowMalformed: true)
+              : '';
+          final prefix = switch (prefixCode) {
+            1 => 'http://www.',
+            2 => 'https://www.',
+            3 => 'http://',
+            4 => 'https://',
+            _ => '',
+          };
+          return '$prefix$body';
+        } else {
+          final text = utf8.decode(record.payload, allowMalformed: true);
+          if (text.contains('carrin://') || text.contains('{')) {
+            return text;
+          }
+        }
+      } catch (_) {}
+    }
+    return null;
+  }
+
+  Future<void> _startNfcListening() async {
+    if (!_isNfcAvailable) return;
+    try {
+      NfcManager.instance.stopSession();
+    } catch (_) {}
+
+    setState(() {
+      _isNfcListening = true;
+      _nfcStatus = 'Aguardando aproximação NFC...';
+    });
+
+    final provider = Provider.of<ItemProvider>(context, listen: false);
+
+    try {
+      await NfcManager.instance.startSession(
+        pollingOptions: {NfcPollingOption.iso14443, NfcPollingOption.iso15693},
+        alertMessageIos: 'Aproxime da tag ou celular transmissor para receber a lista!',
+        onDiscovered: (NfcTag tag) async {
+          HapticFeedback.heavyImpact();
+
+          String? extracted;
+          try {
+            if (defaultTargetPlatform == TargetPlatform.android) {
+              final ndef = android_nfc.NdefAndroid.from(tag);
+              if (ndef != null) {
+                final msg = ndef.cachedNdefMessage ?? await ndef.getNdefMessage();
+                if (msg != null) extracted = _extractTextFromNdef(msg);
+              }
+            } else if (defaultTargetPlatform == TargetPlatform.iOS) {
+              final ndefIos = ios_nfc.NdefIos.from(tag);
+              if (ndefIos != null && ndefIos.cachedNdefMessage != null) {
+                extracted = _extractTextFromNdef(ndefIos.cachedNdefMessage!);
+              }
+            }
+          } catch (_) {}
+
+          if (extracted != null && extracted.isNotEmpty) {
+            final payload = SharedListService.instance.decodeList(extracted);
+            if (payload != null && mounted) {
+              await _processPayload(payload, provider);
+              return;
+            }
+          }
+
+          if (mounted) {
+            setState(() {
+              _nfcStatus = 'Tag detectada, mas formato não reconhecido.';
+            });
+          }
+        },
+      );
+    } catch (_) {
+      if (mounted) {
+        setState(() => _isNfcListening = false);
+      }
+    }
   }
 
   Future<void> _processPayload(SharedListPayload payload, ItemProvider provider) async {
@@ -43,6 +175,7 @@ class _JoinSharedListSheetState extends State<JoinSharedListSheet> {
     });
 
     try {
+      _stopNfc();
       await provider.importAndOpenSharedList(payload);
 
       try {
@@ -101,7 +234,7 @@ class _JoinSharedListSheetState extends State<JoinSharedListSheet> {
       MaterialPageRoute(
         builder: (scannerCtx) => _QrCameraScannerView(
           onCodeScanned: (scannedCode) async {
-            Navigator.pop(scannerCtx); // fecha scanner de câmera
+            Navigator.pop(scannerCtx);
 
             final payload = SharedListService.instance.decodeList(scannedCode);
             if (payload != null) {
@@ -150,31 +283,34 @@ class _JoinSharedListSheetState extends State<JoinSharedListSheet> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
+    final systemBottomPadding = MediaQuery.of(context).padding.bottom;
+    final keyboardPadding = MediaQuery.of(context).viewInsets.bottom;
 
-    return Container(
-      padding: EdgeInsets.only(
-        top: 20,
-        left: 20,
-        right: 20,
-        bottom: MediaQuery.of(context).viewInsets.bottom + 24,
-      ),
-      decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF1E293B) : theme.cardColor,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.3),
-            blurRadius: 20,
-            offset: const Offset(0, -4),
-          ),
-        ],
-      ),
-      child: SingleChildScrollView(
+    return SafeArea(
+      top: false,
+      child: Container(
+        padding: EdgeInsets.only(
+          top: 20,
+          left: 20,
+          right: 20,
+          bottom: keyboardPadding + (systemBottomPadding > 0 ? systemBottomPadding : 16) + 16,
+        ),
+        decoration: BoxDecoration(
+          color: isDark ? const Color(0xFF1E293B) : theme.cardColor,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.3),
+              blurRadius: 20,
+              offset: const Offset(0, -4),
+            ),
+          ],
+        ),
+        child: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // Indicador de arrasto superior
             Center(
               child: Container(
                 width: 44,
@@ -187,7 +323,6 @@ class _JoinSharedListSheetState extends State<JoinSharedListSheet> {
               ),
             ),
 
-            // Título e Ícone
             Row(
               children: [
                 Container(
@@ -197,7 +332,7 @@ class _JoinSharedListSheetState extends State<JoinSharedListSheet> {
                     shape: BoxShape.circle,
                   ),
                   child: const Icon(
-                    Icons.qr_code_scanner_rounded,
+                    Icons.group_add_rounded,
                     color: Color(0xFF10B981),
                     size: 26,
                   ),
@@ -208,7 +343,7 @@ class _JoinSharedListSheetState extends State<JoinSharedListSheet> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'Entrar na Lista de Outra Pessoa',
+                        'Entrar em Lista Compartilhada',
                         style: TextStyle(
                           fontSize: 18,
                           fontWeight: FontWeight.bold,
@@ -217,7 +352,7 @@ class _JoinSharedListSheetState extends State<JoinSharedListSheet> {
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        'Acesse a lista em tempo real sem precisar criar uma lista vazia',
+                        'Conecte-se instantaneamente via Câmera (QR Code) ou NFC',
                         style: TextStyle(fontSize: 12, color: Colors.grey[400]),
                       ),
                     ],
@@ -226,30 +361,136 @@ class _JoinSharedListSheetState extends State<JoinSharedListSheet> {
               ],
             ),
 
-            const SizedBox(height: 24),
+            const SizedBox(height: 20),
 
-            // BOTÃO PRINCIPAL: ESCANEAR QR CODE COM A CÂMERA
-            ElevatedButton.icon(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF10B981),
-                foregroundColor: Colors.white,
-                elevation: 3,
-                padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16),
+            // DUAS OPÇÕES DIRETAS LADO A LADO: SCANNER QR CODE E NFC
+            Row(
+              children: [
+                // 1. Escanear QR Code
+                Expanded(
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(16),
+                    onTap: _isLoading ? null : () => _openQrCameraScanner(context),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 12),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF10B981),
+                        borderRadius: BorderRadius.circular(16),
+                        boxShadow: [
+                          BoxShadow(
+                            color: const Color(0xFF10B981).withValues(alpha: 0.3),
+                            blurRadius: 8,
+                            offset: const Offset(0, 3),
+                          ),
+                        ],
+                      ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: const [
+                          Icon(Icons.qr_code_scanner_rounded, color: Colors.white, size: 30),
+                          SizedBox(height: 8),
+                          Text(
+                            'Escanear\nQR Code',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 13,
+                              fontWeight: FontWeight.bold,
+                              height: 1.2,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+
+                const SizedBox(width: 12),
+
+                // 2. Aproximação NFC
+                Expanded(
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(16),
+                    onTap: _isNfcAvailable
+                        ? (_isNfcListening ? _stopNfc : _startNfcListening)
+                        : null,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 12),
+                      decoration: BoxDecoration(
+                        color: _isNfcListening
+                            ? const Color(0xFF0284C7)
+                            : (isDark ? const Color(0xFF0F172A) : Colors.grey[200]),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(
+                          color: _isNfcListening
+                              ? Colors.lightBlueAccent
+                              : Colors.grey.withValues(alpha: 0.3),
+                          width: _isNfcListening ? 2 : 1,
+                        ),
+                      ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.nfc_rounded,
+                            color: _isNfcListening
+                                ? Colors.white
+                                : (_isNfcAvailable ? const Color(0xFF10B981) : Colors.grey),
+                            size: 30,
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            !_isNfcAvailable
+                                ? 'NFC Não\nDisponível'
+                                : (_isNfcListening ? 'NFC Ativo\nAproxime...' : 'Aproximar\npor NFC'),
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: _isNfcListening
+                                  ? Colors.white
+                                  : (isDark ? Colors.white : Colors.black87),
+                              fontSize: 13,
+                              fontWeight: FontWeight.bold,
+                              height: 1.2,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+
+            if (_isNfcListening) ...[
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                decoration: BoxDecoration(
+                  color: Colors.blue.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.blue.withValues(alpha: 0.3)),
+                ),
+                child: Row(
+                  children: [
+                    const SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.blueAccent),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        _nfcStatus,
+                        style: const TextStyle(fontSize: 12, color: Colors.blueAccent, fontWeight: FontWeight.w500),
+                      ),
+                    ),
+                  ],
                 ),
               ),
-              onPressed: _isLoading ? null : () => _openQrCameraScanner(context),
-              icon: const Icon(Icons.camera_alt_rounded, size: 24),
-              label: const Text(
-                'Escanear QR Code com a Câmera',
-                style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
-              ),
-            ),
+            ],
 
             const SizedBox(height: 20),
 
-            // Divisor "OU COLE O LINK"
             Row(
               children: [
                 Expanded(child: Divider(color: Colors.grey.withValues(alpha: 0.25))),
@@ -271,7 +512,6 @@ class _JoinSharedListSheetState extends State<JoinSharedListSheet> {
 
             const SizedBox(height: 16),
 
-            // Campo para colar link
             Row(
               children: [
                 Expanded(
@@ -347,11 +587,11 @@ class _JoinSharedListSheetState extends State<JoinSharedListSheet> {
           ],
         ),
       ),
+    ),
     );
   }
 }
 
-/// Tela de Scanner de Câmera moderna com MobileScanner dedicada a listas do CARRIN
 class _QrCameraScannerView extends StatefulWidget {
   final ValueChanged<String> onCodeScanned;
 
@@ -422,8 +662,6 @@ class _QrCameraScannerViewState extends State<_QrCameraScannerView> {
               }
             },
           ),
-
-          // Moldura visual do leitor de QR
           Container(
             width: 250,
             height: 250,
@@ -432,8 +670,6 @@ class _QrCameraScannerViewState extends State<_QrCameraScannerView> {
               borderRadius: BorderRadius.circular(20),
             ),
           ),
-
-          // Instrução na parte inferior
           Positioned(
             bottom: 40,
             child: Container(

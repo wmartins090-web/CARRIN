@@ -1282,7 +1282,7 @@ class ItemProvider with ChangeNotifier {
       await switchMonth(listTitle);
     }
 
-    if (replaceExisting) {
+    if (replaceExisting && sharedItems.isNotEmpty) {
       for (var it in List.from(_items)) {
         await removeItem(it.index);
       }
@@ -1537,9 +1537,11 @@ class ItemProvider with ChangeNotifier {
     // 4. Alterna para esta lista
     await switchMonth(title);
 
-    // 5. SEMPRE carrega os itens recebidos no banco local e na memória primeiro!
-    // Isso garante que o segundo celular exiba instantaneamente todos os produtos recebidos (0ms)
-    await importSharedItems(fallbackItems, replaceExisting: true, listTitle: title, newBudget: budget);
+    // 5. Mescla os itens recebidos com a lista local de forma 100% segura e não-destrutiva!
+    // NUNCA apaga produtos locais existentes e nunca esvazia a lista se a compartilhada vier vazia!
+    if (fallbackItems.isNotEmpty) {
+      await importSharedItems(fallbackItems, replaceExisting: false, listTitle: title, newBudget: budget);
+    }
 
     // 6. Ativa escuta em tempo real
     await startSyncListeningForMonth(title);
@@ -2190,7 +2192,20 @@ class ItemProvider with ChangeNotifier {
 
   Future<void> loadMonths() async {
     await initialization;
+    await _dbHelper.recoverAndConsolidateUserData();
     await _loadMonths();
+  }
+
+  /// Força a auto-recuperação de qualquer lista/itens a partir de backups locais
+  Future<void> recoverUserData() async {
+    await initialization;
+    await _dbHelper.recoverAndConsolidateUserData();
+    _itemsCache.clear();
+    await _loadMonths();
+    if (_months.contains(currentMonth)) {
+      await switchMonth(currentMonth);
+    }
+    _safeNotify();
   }
 
   Future<void> _switchMonth(String month) async {
