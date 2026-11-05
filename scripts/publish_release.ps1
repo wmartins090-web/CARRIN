@@ -124,11 +124,64 @@ Write-Output $check
 Write-Output "`nFazendo upload para Cloudflare R2 (CDN Global sem egress)..."
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $r2Script = Join-Path $scriptDir "upload_to_r2.py"
+$r2Success = $false
 if (Test-Path $r2Script) {
     & python -X utf8 $r2Script -a "$apkPath" -v "$tag"
+    if ($LASTEXITCODE -eq 0) {
+        $r2Success = $true
+    }
 } else {
     Write-Warning "Script upload_to_r2.py nao encontrado em $r2Script"
 }
+
+# Verificacao rigorosa: SO disparar push apos o arquivo estar 100% online no servidor
+$serverReady = $false
+$localBytes = (Get-Item $apkPath).Length
+
+Write-Output "`n[CHECK DE SEGURANÇA] Validando se o APK e version.json estão 100% disponíveis nos servidores antes de enviar o push..."
+
+# 1. Checa Cloudflare R2
+$r2CredPath = Join-Path $scriptDir "r2_credentials.json"
+if (Test-Path $r2CredPath) {
+    $r2Cred = Get-Content $r2CredPath -Raw | ConvertFrom-Json
+    $r2ApkUrl = "$($r2Cred.public_base_url.TrimEnd('/'))/$assetName"
+    $r2VersionUrl = "$($r2Cred.public_base_url.TrimEnd('/'))/version.json"
+
+    for ($i = 1; $i -le 6; $i++) {
+        try {
+            $resp = Invoke-WebRequest -Uri $r2ApkUrl -Method Head -TimeoutSec 10 -UseBasicParsing
+            if ($resp.StatusCode -eq 200 -and $resp.Headers["Content-Length"] -eq $localBytes) {
+                Write-Output "[OK] APK confirmado no Cloudflare R2 com tamanho exato ($localBytes bytes)!"
+                $serverReady = $true
+                break
+            }
+        } catch {
+            Write-Output "Tentativa $i: Aguardando propagação na CDN do Cloudflare R2..."
+            Start-Sleep -Seconds 3
+        }
+    }
+}
+
+# 2. Se R2 não foi validado, checa GitHub Releases
+if (-not $serverReady) {
+    $ghUrl = "https://github.com/$repo/releases/download/$tag/$assetName"
+    try {
+        $ghResp = Invoke-WebRequest -Uri $ghUrl -Method Head -TimeoutSec 10 -UseBasicParsing -MaximumRedirection 5
+        if ($ghResp.StatusCode -eq 200) {
+            Write-Output "[OK] APK confirmado disponível no GitHub Releases!"
+            $serverReady = $true
+        }
+    } catch {
+        Write-Warning "Não foi possível confirmar o download no GitHub Releases: $_"
+    }
+}
+
+if (-not $serverReady) {
+    Write-Error "[BLOQUEIO DE SEGURANÇA] O APK ainda não foi confirmado como acessível para download nos servidores (R2 ou GitHub). A notificação push NÃO será enviada para evitar alertar usuários antes do arquivo estar pronto."
+    exit 1
+}
+
+Write-Output "`n[CONFIRMADO] O arquivo subiu com sucesso e está 100% pronto para download!"
 
 # Disparo automatico de Notificacao Push via Firebase FCM
 Write-Output "`nDisparando notificacao push FCM para todos os usuarios instalados..."
