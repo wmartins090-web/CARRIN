@@ -1,16 +1,17 @@
 {
-  "version": "1.3.623",
-  "build_number": 623,
+  "version": "1.3.624",
+  "build_number": 624,
   "release_date": "2026-11-05",
-  "title": "CARRIN v1.3.623",
+  "title": "CARRIN v1.3.624",
   "release_notes": [
-    "Novo Design do Aviso de Atualização: visual temático com a identidade do CARRIN",
-    "Gestos Laterais Estilo Gmail: deslize à direita para marcar como comprado e à esquerda para excluir com 'Desfazer'",
-    "Correção de Exclusão Múltipla: remoção de múltiplos itens selecionados em lote sem perda de itens",
-    "Memorização de descarte de notificações para não reexibir alertas já dispensados"
+    "Seleção em Lote por Categoria: toque ou segure no cabeçalho para selecionar todos os itens da categoria",
+    "Seleção de Intervalo (Range Select): segure outro item para selecionar tudo entre eles",
+    "Definir Mercado em Lote: atribua supermercado para vários itens de uma só vez",
+    "Mover Itens entre Listas: transfira itens selecionados para outro mês com 1 toque",
+    "Exclusão em Lote com Desfazer: remoção fluida sem travar a tela e com botão DESFAZER"
   ],
-  "apk_url": "https://pub-4bdefe4ec784476eae543ebde4bd2f20.r2.dev/carrin_v1.3.623.apk",
-  "size_bytes": 121579602,
+  "apk_url": "https://pub-4bdefe4ec784476eae543ebde4bd2f20.r2.dev/carrin_v1.3.624.apk",
+  "size_bytes": 121661954,
   "is_active": true,
   "force_update": false
 }
