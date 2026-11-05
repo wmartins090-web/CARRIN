@@ -1,13 +1,13 @@
 ﻿{
-    "version":  "1.3.625",
-    "build_number":  625,
+    "version":  "1.3.626",
+    "build_number":  626,
     "release_date":  "2026-11-05",
-    "title":  "CARRIN v1.3.625",
+    "title":  "CARRIN v1.3.610",
     "release_notes":  [
-                          "Entrada direta em listas compartilhadas sem precisar de lista vazia, leitor de QR Code dedicado corrigido, remocao do Google Sheets no compartilhamento e icone vigente do usuario no dialogo de atualizacao."
+                          "Correção de safe area para celulares com barra de 3 botões, blindagem não-destrutiva de listas compartilhadas e auto-recuperação de itens."
                       ],
-    "apk_url":  "https://pub-4bdefe4ec784476eae543ebde4bd2f20.r2.dev/carrin_v1.3.625.apk",
-    "size_bytes":  121661902,
+    "apk_url":  "https://pub-4bdefe4ec784476eae543ebde4bd2f20.r2.dev/carrin_v1.3.626.apk",
+    "size_bytes":  121678370,
     "is_active":  true,
     "force_update":  false
 }
