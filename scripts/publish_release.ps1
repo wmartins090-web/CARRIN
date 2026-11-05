@@ -121,8 +121,34 @@ $check = & curl.exe -L -I -s "https://github.com/$repo/releases/download/$tag/$a
 Write-Output $check
 
 # Upload automatico para Cloudflare R2 CDN (Edge rapido e espelho de contingencia)
-Write-Output "`nFazendo upload para Cloudflare R2 (CDN Global sem egress)..."
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+
+# Atualizacao automatica do version.json local antes do upload
+$repoRoot = Split-Path -Parent $scriptDir
+$localVersionJson = Join-Path $repoRoot "version.json"
+$cleanVersion = $tag.TrimStart('v')
+$buildNum = 0
+if ($cleanVersion -match '\.(\d+)$') {
+    $buildNum = [int]$matches[1]
+} elseif ($cleanVersion -match '^\d+$') {
+    $buildNum = [int]$cleanVersion
+}
+
+$vData = [ordered]@{
+    version = $cleanVersion
+    build_number = $buildNum
+    release_date = (Get-Date).ToString("yyyy-MM-dd")
+    title = $releaseTitle
+    release_notes = @($releaseNotes)
+    apk_url = "https://pub-4bdefe4ec784476eae543ebde4bd2f20.r2.dev/$assetName"
+    size_bytes = (Get-Item $apkPath).Length
+    is_active = $true
+    force_update = $false
+}
+$vData | ConvertTo-Json -Depth 4 | Set-Content -Path $localVersionJson -Encoding utf8
+Write-Output "Arquivo version.json atualizado automaticamente para v$cleanVersion (build $buildNum)."
+
+Write-Output "`nFazendo upload para Cloudflare R2 (CDN Global sem egress)..."
 $r2Script = Join-Path $scriptDir "upload_to_r2.py"
 $r2Success = $false
 if (Test-Path $r2Script) {
