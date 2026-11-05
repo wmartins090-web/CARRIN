@@ -10,6 +10,7 @@ import '../widgets/counting_text.dart';
 import '../services/utils.dart';
 import 'shopping_list_screen.dart';
 import 'receipt_scanner_screen.dart';
+import '../widgets/join_shared_list_sheet.dart';
 
 class MonthSelectionScreen extends StatefulWidget {
   const MonthSelectionScreen({super.key});
@@ -129,6 +130,11 @@ class _MonthSelectionScreenState extends State<MonthSelectionScreen> with Automa
             elevation: 0,
             actions: [
               IconButton(
+                icon: const Icon(Icons.qr_code_scanner_rounded),
+                tooltip: 'Entrar em Lista Compartilhada',
+                onPressed: () => JoinSharedListSheet.show(context),
+              ),
+              IconButton(
                 icon: Icon(_isDescending ? Icons.arrow_downward_rounded : Icons.arrow_upward_rounded),
                 tooltip: _isDescending ? 'Mais recentes no topo' : 'Mais antigas no topo',
                 onPressed: _toggleSort,
@@ -174,6 +180,12 @@ class _MonthSelectionScreenState extends State<MonthSelectionScreen> with Automa
                                   onPressed: () => _showCreateMonthDialog(context),
                                   icon: const Icon(Icons.add),
                                   label: const Text('Criar Primeiro Carrinho'),
+                                ),
+                                const SizedBox(height: 12),
+                                OutlinedButton.icon(
+                                  onPressed: () => JoinSharedListSheet.show(context),
+                                  icon: const Icon(Icons.qr_code_scanner_rounded),
+                                  label: const Text('Entrar em Lista de Outra Pessoa'),
                                 ),
                               ],
                             ),
@@ -227,12 +239,29 @@ class _MonthSelectionScreenState extends State<MonthSelectionScreen> with Automa
                         ],
                       ),
           ),
-          floatingActionButton: FloatingActionButton.extended(
-            onPressed: () => _showCreateMonthDialog(context),
-            label: const Text('Novo Carrinho', style: TextStyle(fontWeight: FontWeight.bold)),
-            icon: const Icon(Icons.add_shopping_cart),
-            backgroundColor: Theme.of(context).colorScheme.primary,
-            foregroundColor: Colors.white,
+          floatingActionButton: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              FloatingActionButton.extended(
+                heroTag: 'fab_join_shared_list',
+                onPressed: () => JoinSharedListSheet.show(context),
+                label: const Text('Entrar em Lista', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                icon: const Icon(Icons.qr_code_scanner_rounded, size: 20),
+                backgroundColor: Theme.of(context).brightness == Brightness.dark
+                    ? const Color(0xFF1E293B)
+                    : Colors.grey[850],
+                foregroundColor: const Color(0xFF10B981),
+              ),
+              const SizedBox(width: 10),
+              FloatingActionButton.extended(
+                heroTag: 'fab_new_month',
+                onPressed: () => _showCreateMonthDialog(context),
+                label: const Text('Novo Carrinho', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                icon: const Icon(Icons.add_shopping_cart, size: 20),
+                backgroundColor: Theme.of(context).colorScheme.primary,
+                foregroundColor: Colors.white,
+              ),
+            ],
           ),
         );
       },

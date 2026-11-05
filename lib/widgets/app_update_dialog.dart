@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../services/app_update_service.dart';
 import '../services/notification_service.dart';
 import '../screens/main_screen.dart';
+import '../theme/app_themes.dart';
 
 /// Modal compacto e amigável de instalação para o usuário final
 class AppUpdateDialog extends StatefulWidget {
@@ -266,14 +268,22 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
                           width: 1,
                         ),
                       ),
-                      child: Image.asset(
-                        'assets/images/app_logo_transparent.png',
-                        fit: BoxFit.contain,
-                        errorBuilder: (_, __, ___) => const Icon(
-                          Icons.shopping_cart_rounded,
-                          color: Color(0xFF10B981),
-                          size: 24,
-                        ),
+                      child: Builder(
+                        builder: (ctx) {
+                          String activeIcon = 'assets/images/app_logo_transparent.png';
+                          try {
+                            activeIcon = Provider.of<ThemeProvider>(ctx, listen: false).appIcon;
+                          } catch (_) {}
+                          return Image.asset(
+                            activeIcon,
+                            fit: BoxFit.contain,
+                            errorBuilder: (_, __, ___) => const Icon(
+                              Icons.shopping_cart_rounded,
+                              color: Color(0xFF10B981),
+                              size: 24,
+                            ),
+                          );
+                        },
                       ),
                     ),
                     const SizedBox(width: 14),
