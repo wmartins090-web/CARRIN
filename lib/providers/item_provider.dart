@@ -2799,6 +2799,71 @@ class ItemProvider with ChangeNotifier {
     _enqueueOperation('sync_items', month, {});
   }
 
+  /// Restaura um item previamente excluído (usado pela ação "Desfazer" do swipe lateral)
+  Future<void> restoreItem(Item item, {int? atIndex}) async {
+    await initialization;
+    final month = _service.currentMonthTitle;
+    if (isMonthFinalized(month)) {
+      debugPrint('Erro: Tentativa de restaurar item em um mês finalizado.');
+      return;
+    }
+
+    if (atIndex != null && atIndex >= 0 && atIndex <= _items.length) {
+      _items.insert(atIndex, item);
+    } else {
+      _items.add(item);
+    }
+
+    // Reindexa ordenadamente
+    for (var i = 0; i < _items.length; i++) {
+      _items[i] = Item(
+        index: i + 7,
+        name: _items[i].name,
+        quantity: _items[i].quantity,
+        unitPrice: _items[i].unitPrice,
+        isKg: _items[i].isKg,
+        category: _items[i].category,
+        isBought: _items[i].isBought,
+        barcode: _items[i].barcode,
+        supermarket: _items[i].supermarket,
+      );
+    }
+
+    _updateLocalMetrics(checkBudget: true);
+
+    try {
+      await _dbHelper.saveItems(month, _items);
+      _itemsCache[month] = List.from(_items);
+      _dbHelper.saveLocalBackupSnapshot();
+    } catch (e) {
+      debugPrint('Erro ao restaurar item no SQLite: $e');
+    }
+
+    _safeNotify();
+
+    // Notifica peer sync em tempo real
+    getSyncIdForMonth(month).then((sid) {
+      if (sid != null && sid.isNotEmpty) {
+        SharedListSyncService.instance.publishAction(
+          syncId: sid,
+          action: 'add',
+          data: {
+            'name': item.name,
+            'quantity': item.quantity,
+            'unitPrice': item.unitPrice,
+            'isKg': item.isKg,
+            'category': item.category,
+            'isBought': item.isBought,
+            'barcode': item.barcode,
+            'supermarket': item.supermarket,
+          },
+        );
+      }
+    });
+
+    _enqueueOperation('sync_items', month, {});
+  }
+
   Future<void> toggleBought(Item item) async {
     await initialization;
     final month = _service.currentMonthTitle;

@@ -1368,7 +1368,7 @@ if (_isMarketLocked)
         ? Theme.of(context).colorScheme.primary
         : (status == 'Caro' ? Theme.of(context).colorScheme.error : (badgeInfo['color'] as Color));
 
-    return Material(
+    final tile = Material(
       color: isSelected ? Theme.of(context).primaryColor.withValues(alpha: 0.15) : Colors.transparent,
       child: InkWell(
         onTap: () {
@@ -1628,6 +1628,132 @@ if (_isMarketLocked)
               ),
             ],
           ),
+        ),
+      ),
+    );
+
+    // Se estiver em modo de seleção múltipla, expandido ou em mês finalizado, desativa o swipe lateral
+    final bool canSwipe = !_isSelectionMode && !isExpanded && !itemProvider.isCurrentMonthFinalized;
+
+    return Dismissible(
+      key: ValueKey('item_${item.index}_${item.name}'),
+      direction: canSwipe ? DismissDirection.horizontal : DismissDirection.none,
+      dismissThresholds: const {
+        DismissDirection.startToEnd: 0.28,
+        DismissDirection.endToStart: 0.28,
+      },
+      background: _buildSwipeBoughtBackground(item.isBought),
+      secondaryBackground: _buildSwipeDeleteBackground(),
+      confirmDismiss: (direction) async {
+        if (direction == DismissDirection.startToEnd) {
+          // Arrastar para a Direita 🟢: Marca/desmarca o item como Comprado / No Carrinho
+          Vibration.vibrate(duration: 40);
+          await itemProvider.toggleBought(item);
+          // Retorna false para animar o item de volta à posição com o estado atualizado
+          return false;
+        } else if (direction == DismissDirection.endToStart) {
+          // Arrastar para a Esquerda 🔴: Exclui o item imediatamente
+          Vibration.vibrate(duration: 50);
+          return true;
+        }
+        return false;
+      },
+      onDismissed: (direction) {
+        if (direction == DismissDirection.endToStart) {
+          final originalPos = itemProvider.items.indexOf(item);
+          final deletedIndex = item.index;
+          if (deletedIndex != null) {
+            itemProvider.removeItem(deletedIndex);
+          }
+          _showUndoDeleteSnackBar(context, item, originalPos, itemProvider);
+        }
+      },
+      child: tile,
+    );
+  }
+
+  Widget _buildSwipeBoughtBackground(bool isBought) {
+    return Container(
+      alignment: Alignment.centerLeft,
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      color: const Color(0xFF10B981),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            isBought ? Icons.remove_shopping_cart_rounded : Icons.shopping_cart_checkout_rounded,
+            color: Colors.white,
+            size: 24,
+          ),
+          const SizedBox(width: 10),
+          Text(
+            isBought ? 'Voltar para Lista' : 'No Carrinho',
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.bold,
+              fontSize: 13.5,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSwipeDeleteBackground() {
+    return Container(
+      alignment: Alignment.centerRight,
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      color: Colors.red.shade600,
+      child: const Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            'Excluir',
+            style: TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.bold,
+              fontSize: 13.5,
+            ),
+          ),
+          SizedBox(width: 10),
+          Icon(
+            Icons.delete_sweep_rounded,
+            color: Colors.white,
+            size: 24,
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showUndoDeleteSnackBar(BuildContext context, Item item, int originalPos, ItemProvider itemProvider) {
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        backgroundColor: const Color(0xFF1E293B),
+        duration: const Duration(seconds: 4),
+        content: Row(
+          children: [
+            const Icon(Icons.delete_outline_rounded, color: Colors.redAccent, size: 20),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                '"${item.name}" excluído',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontWeight: FontWeight.w500),
+              ),
+            ),
+          ],
+        ),
+        action: SnackBarAction(
+          label: 'DESFAZER',
+          textColor: const Color(0xFF10B981),
+          onPressed: () {
+            itemProvider.restoreItem(item, atIndex: originalPos >= 0 ? originalPos : null);
+          },
         ),
       ),
     );
