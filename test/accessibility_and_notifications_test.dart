@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:lista_compras/theme/app_themes.dart';
 import 'package:lista_compras/services/notification_service.dart';
+import 'package:lista_compras/services/app_update_service.dart';
 
 void main() {
   setUp(() {
@@ -78,6 +79,28 @@ void main() {
       expect(NotificationService.budgetNotificationId, equals(1));
       expect(NotificationService.updateAvailableNotificationId, equals(2));
       expect(NotificationService.updateReadyNotificationId, equals(3));
+    });
+
+    test('shopping progress manual dismissal respects session state until restarted', () {
+      final service = NotificationService();
+      expect(service.isProgressDismissedForSession, isFalse);
+
+      service.resetProgressSessionDismissal();
+      expect(service.isProgressDismissedForSession, isFalse);
+    });
+
+    test('update dismissal persists build number and version', () async {
+      final updateService = AppUpdateService.instance;
+      
+      expect(await updateService.isBuildDismissed(622, version: '1.3.622'), isFalse);
+
+      await updateService.dismissBuild(622, version: '1.3.622');
+
+      expect(await updateService.isBuildDismissed(622, version: '1.3.622'), isTrue);
+      // Older or equal build numbers should also be considered dismissed
+      expect(await updateService.isBuildDismissed(621, version: '1.3.621'), isTrue);
+      // Newer build numbers should not be dismissed
+      expect(await updateService.isBuildDismissed(623, version: '1.3.623'), isFalse);
     });
   });
 }

@@ -24,13 +24,19 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 
     final data = message.data;
     final title = data['title'] ?? '🚀 Atualização do CARRIN';
-    final version = data['version'] ?? AppUpdateService.currentAppVersion;
+    final version = (data['version'] ?? AppUpdateService.currentAppVersion).toString();
     final buildNumber = int.tryParse(data['build_number']?.toString() ?? '') ??
         AppUpdateService.currentBuildNumber + 1;
 
+    // Se o usuário dispensou esta versão ou build, não exibe notificação
+    if (await AppUpdateService.instance.isBuildDismissed(buildNumber, version: version)) {
+      debugPrint('FCM Background: Atualização v$version já dispensada pelo usuário. Ignorando.');
+      return;
+    }
+
     await NotificationService().init();
     await NotificationService().showUpdateAvailable(
-      version: version.toString(),
+      version: version,
       buildNumber: buildNumber,
       title: title.toString(),
     );
@@ -81,17 +87,22 @@ class FcmService {
         }
 
         // Ouvinte para mensagens recebidas com o app em primeiro plano (aberto)
-        FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+        FirebaseMessaging.onMessage.listen((RemoteMessage message) async {
           final notification = message.notification;
           final data = message.data;
 
           final title = notification?.title ?? data['title'] ?? '🚀 Atualização do CARRIN';
-          final version = data['version'] ?? AppUpdateService.currentAppVersion;
+          final version = (data['version'] ?? AppUpdateService.currentAppVersion).toString();
           final buildNumber = int.tryParse(data['build_number']?.toString() ?? '') ??
               AppUpdateService.currentBuildNumber + 1;
 
+          if (await AppUpdateService.instance.isBuildDismissed(buildNumber, version: version)) {
+            debugPrint('FCM Foreground: Atualização v$version já dispensada pelo usuário. Ignorando.');
+            return;
+          }
+
           NotificationService().showUpdateAvailable(
-            version: version.toString(),
+            version: version,
             buildNumber: buildNumber,
             title: title.toString(),
           );

@@ -503,7 +503,7 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
                         Expanded(
                           child: OutlinedButton(
                             onPressed: () {
-                              AppUpdateService.instance.dismissBuild(info.buildNumber);
+                              AppUpdateService.instance.dismissBuild(info.buildNumber, version: info.version);
                               Navigator.pop(context);
                             },
                             style: OutlinedButton.styleFrom(

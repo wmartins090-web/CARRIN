@@ -1823,6 +1823,11 @@ class ItemProvider with ChangeNotifier {
         return;
       }
 
+      // Se o usuário dispensou manualmente a notificação nesta sessão, não a recria
+      if (_notificationService.isProgressDismissedForSession) {
+        return;
+      }
+
       final int total = _items.length;
       final int bought = _items.where((it) => it.isBought).length;
       final double totalPrice = totalCost;

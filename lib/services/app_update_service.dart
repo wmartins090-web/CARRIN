@@ -78,8 +78,8 @@ class AppUpdateService {
   AppUpdateService._();
   static final AppUpdateService instance = AppUpdateService._();
 
-  static String currentAppVersion = '1.3.621';
-  static int currentBuildNumber = 621;
+  static String currentAppVersion = '1.3.622';
+  static int currentBuildNumber = 622;
 
   /// Inicializa dinamicamente as informações reais do pacote instalado no Android
   static Future<void> initPackageInfo() async {
@@ -101,6 +101,7 @@ class AppUpdateService {
 
   static const String _prefCustomVersionUrlKey = 'custom_app_version_url';
   static const String _prefDismissedBuildKey = 'dismissed_update_build';
+  static const String _prefDismissedVersionKey = 'dismissed_update_version';
 
   /// Armazena o último motivo de falha na consulta (ex: 404 por repo privado ou falha de conexão)
   String? lastFetchError;
@@ -164,20 +165,34 @@ class AppUpdateService {
     if (!isNewer) return null;
 
     if (!ignoreDismissed && !info.forceUpdate) {
-      final prefs = await SharedPreferences.getInstance();
-      final dismissedBuild = prefs.getInt(_prefDismissedBuildKey) ?? 0;
-      if (dismissedBuild >= info.buildNumber) {
-        return null; // Usuário pediu para lembrar depois desta build
+      final isDismissed = await isBuildDismissed(info.buildNumber, version: info.version);
+      if (isDismissed) {
+        return null; // Usuário pediu para lembrar depois desta build/versão
       }
     }
 
     return info;
   }
 
-  /// Guarda que o usuário dispensou temporariamente esta build
-  Future<void> dismissBuild(int buildNumber) async {
+  /// Guarda que o usuário dispensou temporariamente esta build ou versão
+  Future<void> dismissBuild(int buildNumber, {String? version}) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt(_prefDismissedBuildKey, buildNumber);
+    if (version != null && version.isNotEmpty) {
+      await prefs.setString(_prefDismissedVersionKey, version);
+    }
+  }
+
+  /// Verifica se esta build ou versão foi dispensada pelo usuário
+  Future<bool> isBuildDismissed(int buildNumber, {String? version}) async {
+    final prefs = await SharedPreferences.getInstance();
+    final dismissedBuild = prefs.getInt(_prefDismissedBuildKey) ?? 0;
+    if (buildNumber <= dismissedBuild) return true;
+    final dismissedVersion = prefs.getString(_prefDismissedVersionKey);
+    if (version != null && version.isNotEmpty && dismissedVersion == version) {
+      return true;
+    }
+    return false;
   }
 
   /// Verifica se a permissão para instalar APKs desconhecidos está ativa no Android
@@ -313,6 +328,12 @@ class AppUpdateService {
     AppUpdateInfo info, {
     void Function(AppUpdateInfo info, String filePath)? onReady,
   }) async {
+    // Se o usuário dispensou esta versão e não for forçada, não baixa nem notifica
+    if (!info.forceUpdate && await isBuildDismissed(info.buildNumber, version: info.version)) {
+      debugPrint('AppUpdateService: downloadInBackground ignorado pois v${info.version} foi dispensada.');
+      return null;
+    }
+
     // 1. Verifica se já está em disco
     final existing = await getDownloadedApk(info);
     if (existing != null) {
@@ -356,6 +377,7 @@ class AppUpdateService {
       NotificationService().showUpdateReady(
         version: info.version,
         apkPath: file.path,
+        buildNumber: info.buildNumber,
       );
 
       onReady?.call(info, file.path);

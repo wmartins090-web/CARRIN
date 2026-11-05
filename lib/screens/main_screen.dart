@@ -9,6 +9,7 @@ import 'settings_screen.dart';
 import '../providers/item_provider.dart';
 import '../widgets/interactive_tab_tutorial.dart';
 import '../services/app_update_service.dart';
+import '../services/notification_service.dart';
 import '../widgets/app_update_dialog.dart';
 
 class MainScreen extends StatefulWidget {
@@ -72,8 +73,9 @@ class MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       _scheduleTabTutorial(_currentIndex, delay: const Duration(milliseconds: 220));
 
       // Checagem automática e download silencioso em segundo plano de nova versão
-      Future.delayed(const Duration(milliseconds: 2000), () {
+      Future.delayed(const Duration(milliseconds: 2000), () async {
         if (!mounted) return;
+        await NotificationService().checkAndSyncDismissedNotifications();
         AppUpdateService.instance.checkForUpdate().then((info) {
           if (info != null && mounted) {
             // O app baixa silenciosamente em background e só avisa quando estiver 100% baixado e pronto
@@ -98,6 +100,8 @@ class MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       Provider.of<ItemProvider>(context, listen: false).detectNearbySupermarket(
         notify: false,
       );
+      // Sincroniza se o usuário jogou alguma notificação pro lado na barra do sistema
+      NotificationService().checkAndSyncDismissedNotifications();
     }
   }
 
