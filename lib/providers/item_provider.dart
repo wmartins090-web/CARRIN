@@ -2729,6 +2729,76 @@ class ItemProvider with ChangeNotifier {
     _enqueueOperation('sync_items', month, {});
   }
 
+  /// Remove múltiplos itens de uma só vez, evitando perda de índices e reindexações parciais
+  Future<void> removeMultipleItems(List<Item> itemsToRemove) async {
+    await initialization;
+    final month = _service.currentMonthTitle;
+    if (isMonthFinalized(month)) {
+      debugPrint('Erro: Tentativa de remover itens de um mês finalizado.');
+      return;
+    }
+    if (itemsToRemove.isEmpty) return;
+
+    final toRemoveIndexes = itemsToRemove.map((it) => it.index).whereType<int>().toSet();
+    final toRemoveNames = itemsToRemove.map((it) => it.name.trim().toLowerCase()).toSet();
+
+    final removedList = <Item>[];
+    _items.removeWhere((it) {
+      final shouldRemove = (it.index != null && toRemoveIndexes.contains(it.index)) ||
+          toRemoveNames.contains(it.name.trim().toLowerCase());
+      if (shouldRemove) {
+        removedList.add(it);
+        return true;
+      }
+      return false;
+    });
+
+    for (var i = 0; i < _items.length; i++) {
+      _items[i] = Item(
+        index: i + 7,
+        name: _items[i].name,
+        quantity: _items[i].quantity,
+        unitPrice: _items[i].unitPrice,
+        isKg: _items[i].isKg,
+        category: _items[i].category,
+        isBought: _items[i].isBought,
+        barcode: _items[i].barcode,
+      );
+    }
+
+    _updateLocalMetrics(checkBudget: true);
+
+    try {
+      await _dbHelper.saveItems(month, _items);
+      _itemsCache[month] = List.from(_items);
+      _dbHelper.saveLocalBackupSnapshot();
+    } catch (e) {
+      debugPrint('Erro ao remover múltiplos itens no SQLite: $e');
+    }
+
+    _safeNotify();
+
+    // Notifica peer sync para cada item removido
+    if (removedList.isNotEmpty) {
+      getSyncIdForMonth(month).then((sid) {
+        if (sid != null && sid.isNotEmpty) {
+          for (var it in removedList) {
+            SharedListSyncService.instance.publishAction(
+              syncId: sid,
+              action: 'remove',
+              data: {
+                'name': it.name,
+                'barcode': it.barcode,
+              },
+            );
+          }
+        }
+      });
+    }
+
+    _enqueueOperation('sync_items', month, {});
+  }
+
   Future<void> toggleBought(Item item) async {
     await initialization;
     final month = _service.currentMonthTitle;

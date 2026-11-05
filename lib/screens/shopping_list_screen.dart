@@ -256,20 +256,29 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> with SingleTick
       final proceed = await showDialog<bool>(
         context: context,
         builder: (ctx) => AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
           title: const Text('Excluir Itens'),
           content: Text('Tem certeza que deseja excluir ${itemsToProcess.length} itens?'),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
-            TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Excluir', style: TextStyle(color: Colors.red))),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancelar'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red.shade600,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+              child: const Text('Excluir'),
+            ),
           ],
         ),
       );
       if (proceed != true) return;
 
-      for (var it in itemsToProcess) {
-        await provider.removeItem(it.index!);
-      }
+      await provider.removeMultipleItems(itemsToProcess);
     } else if (action == 'bought') {
       for (var it in itemsToProcess) {
         if (!it.isBought) await provider.toggleBought(it);

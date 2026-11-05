@@ -212,19 +212,22 @@ class SettingsScreen extends StatelessWidget {
   Future<void> _handleCheckUpdate(BuildContext context) async {
     final messenger = ScaffoldMessenger.of(context);
     messenger.showSnackBar(
-      const SnackBar(
-        content: Row(
+      SnackBar(
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        backgroundColor: const Color(0xFF1E293B),
+        content: const Row(
           children: [
             SizedBox(
               width: 18,
               height: 18,
-              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+              child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF10B981)),
             ),
             SizedBox(width: 12),
             Text('Verificando se há novas atualizações...'),
           ],
         ),
-        duration: Duration(seconds: 2),
+        duration: const Duration(seconds: 2),
       ),
     );
 
@@ -234,38 +237,13 @@ class SettingsScreen extends StatelessWidget {
 
     if (info != null) {
       final cached = await AppUpdateService.instance.getDownloadedApk(info);
-      if (cached != null) {
-        if (!context.mounted) return;
-        AppUpdateDialog.showReady(context, info, cached.path);
-      } else if (AppUpdateService.instance.isDownloadingInBackground) {
-        final prog = (AppUpdateService.instance.backgroundProgress * 100).toInt();
-        messenger.showSnackBar(
-          SnackBar(
-            content: Text('A nova versão (v${info.version}) já está sendo baixada em segundo plano ($prog%). Você será avisado assim que concluir!'),
-            duration: const Duration(seconds: 4),
-            backgroundColor: Colors.blue.shade700,
-          ),
-        );
-      } else {
-        messenger.showSnackBar(
-          SnackBar(
-            content: Text('Nova versão v${info.version} encontrada! Baixando silenciosamente em segundo plano...'),
-            duration: const Duration(seconds: 4),
-            backgroundColor: Colors.blue.shade700,
-          ),
-        );
-        AppUpdateService.instance.downloadInBackground(
-          info,
-          onReady: (readyInfo, apkPath) {
-            if (context.mounted) {
-              AppUpdateDialog.showReady(context, readyInfo, apkPath);
-            }
-          },
-        );
-      }
+      if (!context.mounted) return;
+      AppUpdateDialog.show(context, info, readyApkPath: cached?.path);
     } else if (AppUpdateService.instance.lastFetchError != null) {
       messenger.showSnackBar(
         SnackBar(
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           content: Row(
             children: [
               const Icon(Icons.warning_amber_rounded, color: Colors.white, size: 20),
@@ -280,7 +258,17 @@ class SettingsScreen extends StatelessWidget {
     } else {
       messenger.showSnackBar(
         SnackBar(
-          content: Text('🎉 Você já está usando a versão mais recente! (v${AppUpdateService.currentAppVersion})'),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          content: Row(
+            children: [
+              const Icon(Icons.check_circle_rounded, color: Colors.white, size: 20),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text('🎉 Você já está usando a versão mais recente! (v${AppUpdateService.currentAppVersion})'),
+              ),
+            ],
+          ),
           duration: const Duration(seconds: 3),
           backgroundColor: const Color(0xFF10B981),
         ),

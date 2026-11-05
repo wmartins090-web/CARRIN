@@ -234,66 +234,117 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
 
     return Center(
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 380),
+        constraints: const BoxConstraints(maxWidth: 390),
         child: Dialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-          insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+          backgroundColor: isDark ? const Color(0xFF1A2234) : Colors.white,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(28),
+            side: BorderSide(
+              color: const Color(0xFF10B981).withValues(alpha: 0.25),
+              width: 1.2,
+            ),
+          ),
+          insetPadding: const EdgeInsets.symmetric(horizontal: 22, vertical: 24),
           child: Padding(
             padding: const EdgeInsets.all(22),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                // Cabeçalho compacto
+                // Cabeçalho CARRIN
                 Row(
                   children: [
                     Container(
-                      padding: const EdgeInsets.all(10),
+                      width: 46,
+                      height: 46,
+                      padding: const EdgeInsets.all(6),
                       decoration: BoxDecoration(
-                        color: (isReady ? const Color(0xFF10B981) : colorScheme.primary).withValues(alpha: 0.12),
-                        shape: BoxShape.circle,
+                        color: const Color(0xFF10B981).withValues(alpha: 0.14),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(
+                          color: const Color(0xFF10B981).withValues(alpha: 0.3),
+                          width: 1,
+                        ),
                       ),
-                      child: Icon(
-                        isReady ? Icons.check_circle_outline_rounded : Icons.system_update_rounded,
-                        color: isReady ? const Color(0xFF10B981) : colorScheme.primary,
-                        size: 24,
+                      child: Image.asset(
+                        'assets/images/app_logo_transparent.png',
+                        fit: BoxFit.contain,
+                        errorBuilder: (_, __, ___) => const Icon(
+                          Icons.shopping_cart_rounded,
+                          color: Color(0xFF10B981),
+                          size: 24,
+                        ),
                       ),
                     ),
-                    const SizedBox(width: 12),
+                    const SizedBox(width: 14),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            isReady ? 'Atualização Pronta!' : 'Nova Versão',
-                            style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
-                          ),
-                          const SizedBox(height: 2),
-                          Text(
-                            'CARRIN v${info.version}',
-                            style: TextStyle(
-                              fontSize: 12.5,
-                              color: isReady ? const Color(0xFF10B981) : colorScheme.primary,
-                              fontWeight: FontWeight.w600,
+                            isReady ? 'Atualização Pronta!' : 'Nova Versão do CARRIN',
+                            style: const TextStyle(
+                              fontSize: 16.5,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: -0.2,
                             ),
+                          ),
+                          const SizedBox(height: 3),
+                          Row(
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: Colors.grey.withValues(alpha: 0.15),
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                child: Text(
+                                  'v${AppUpdateService.currentAppVersion}',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: isDark ? Colors.white60 : Colors.black54,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ),
+                              const Padding(
+                                padding: EdgeInsets.symmetric(horizontal: 5),
+                                child: Icon(Icons.arrow_forward_rounded, size: 12, color: Color(0xFF10B981)),
+                              ),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF10B981).withValues(alpha: 0.16),
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                child: Text(
+                                  'v${info.version}',
+                                  style: const TextStyle(
+                                    fontSize: 11,
+                                    color: Color(0xFF10B981),
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
                         ],
                       ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 14),
+                const SizedBox(height: 16),
 
                 // Mensagem concisa
                 Text(
                   isReady
-                      ? 'A nova versão foi baixada em segundo plano e já está pronta para instalar.'
+                      ? 'O instalador foi baixado em segundo plano e está pronto para instalação.'
                       : (_isDownloading
-                          ? 'Baixando atualização em segundo plano...'
-                          : 'Uma versão mais recente do aplicativo está disponível.'),
+                          ? 'Baixando atualização do aplicativo...'
+                          : 'Uma versão mais recente está disponível com melhorias e correções.'),
                   style: TextStyle(
                     fontSize: 13,
-                    height: 1.4,
+                    height: 1.45,
                     color: isDark ? Colors.white70 : Colors.black87,
                   ),
                 ),
@@ -382,8 +433,8 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
                     value: _totalBytes > 0 ? _progress : null,
                     borderRadius: BorderRadius.circular(8),
                     minHeight: 6,
-                    backgroundColor: theme.dividerColor.withValues(alpha: 0.1),
-                    color: colorScheme.primary,
+                    backgroundColor: const Color(0xFF10B981).withValues(alpha: 0.15),
+                    color: const Color(0xFF10B981),
                   ),
                   const SizedBox(height: 6),
                   Row(
@@ -391,7 +442,7 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
                     children: [
                       Text(
                         _totalBytes > 0 ? '${(_progress * 100).toInt()}%' : 'Baixando...',
-                        style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold, color: colorScheme.primary),
+                        style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold, color: Color(0xFF10B981)),
                       ),
                       if (_totalBytes > 0)
                         Text(
@@ -507,10 +558,11 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
                               Navigator.pop(context);
                             },
                             style: OutlinedButton.styleFrom(
-                              padding: const EdgeInsets.symmetric(vertical: 12),
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                              padding: const EdgeInsets.symmetric(vertical: 13),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                              side: BorderSide(color: isDark ? Colors.white24 : Colors.black12),
                             ),
-                            child: const Text('Depois'),
+                            child: const Text('Lembrar depois'),
                           ),
                         ),
                       if (!info.forceUpdate) const SizedBox(width: 10),
@@ -530,10 +582,10 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
                             style: const TextStyle(fontWeight: FontWeight.bold),
                           ),
                           style: ElevatedButton.styleFrom(
-                            backgroundColor: isReady ? const Color(0xFF10B981) : colorScheme.primary,
+                            backgroundColor: const Color(0xFF10B981),
                             foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                            padding: const EdgeInsets.symmetric(vertical: 13),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                             elevation: 0,
                           ),
                         ),
