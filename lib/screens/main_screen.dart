@@ -72,21 +72,16 @@ class MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       );
       _scheduleTabTutorial(_currentIndex, delay: const Duration(milliseconds: 220));
 
-      // Checagem automática e download silencioso em segundo plano de nova versão
+      // Checagem automática de nova versão na abertura do app
       Future.delayed(const Duration(milliseconds: 2000), () async {
         if (!mounted) return;
         await NotificationService().checkAndSyncDismissedNotifications();
-        AppUpdateService.instance.checkForUpdate().then((info) {
-          if (info != null && mounted) {
-            // O app baixa silenciosamente em background e só avisa quando estiver 100% baixado e pronto
-            AppUpdateService.instance.downloadInBackground(
-              info,
-              onReady: (readyInfo, apkPath) {
-                if (mounted && !AppUpdateDialog.isShowing) {
-                  AppUpdateDialog.showReady(context, readyInfo, apkPath);
-                }
-              },
-            );
+        AppUpdateService.instance.checkForUpdate().then((info) async {
+          if (info != null && mounted && !AppUpdateDialog.isShowing) {
+            final cached = await AppUpdateService.instance.getDownloadedApk(info);
+            if (mounted && !AppUpdateDialog.isShowing) {
+              AppUpdateDialog.show(context, info, readyApkPath: cached?.path);
+            }
           }
         });
       });
