@@ -156,7 +156,7 @@ if (Test-Path $r2CredPath) {
                 break
             }
         } catch {
-            Write-Output "Tentativa $i: Aguardando propagação na CDN do Cloudflare R2..."
+            Write-Output "Tentativa $($i) - Aguardando propagacao na CDN do Cloudflare R2..."
             Start-Sleep -Seconds 3
         }
     }
