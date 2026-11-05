@@ -65,6 +65,7 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> with SingleTick
 
   bool _isSelectionMode = false;
   final Set<int> _selectedItemIndexes = {};
+  int? _lastSelectedItemId;
 
   bool _marketMode = false;
   bool _isMarketLocked = false;
@@ -232,7 +233,10 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> with SingleTick
   void _toggleSelectionMode() {
     setState(() {
       _isSelectionMode = !_isSelectionMode;
-      if (!_isSelectionMode) _selectedItemIndexes.clear();
+      if (!_isSelectionMode) {
+        _selectedItemIndexes.clear();
+        _lastSelectedItemId = null;
+      }
     });
   }
 
@@ -240,56 +244,543 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> with SingleTick
     setState(() {
       if (_selectedItemIndexes.contains(index)) {
         _selectedItemIndexes.remove(index);
-        if (_selectedItemIndexes.isEmpty) _isSelectionMode = false;
+        if (_selectedItemIndexes.isEmpty) {
+          _isSelectionMode = false;
+          _lastSelectedItemId = null;
+        }
       } else {
         _selectedItemIndexes.add(index);
+        _isSelectionMode = true;
+        _lastSelectedItemId = index;
+      }
+    });
+  }
+
+  void _toggleCategorySelection(Set<int> categoryIndexes, bool isAllSelected) {
+    setState(() {
+      if (isAllSelected) {
+        _selectedItemIndexes.removeAll(categoryIndexes);
+        if (_selectedItemIndexes.isEmpty) {
+          _isSelectionMode = false;
+          _lastSelectedItemId = null;
+        }
+      } else {
+        _selectedItemIndexes.addAll(categoryIndexes);
         _isSelectionMode = true;
       }
     });
   }
 
-  void _handleBatchAction(String action) async {
-    final provider = Provider.of<ItemProvider>(context, listen: false);
-    final itemsToProcess = provider.items.where((it) => _selectedItemIndexes.contains(it.index)).toList();
+  void _handleItemLongPress(Item item, List<Item> visibleItems) {
+    if (item.index == null) return;
+    try {
+      Vibration.vibrate(duration: 40);
+    } catch (_) {
+      HapticFeedback.selectionClick();
+    }
 
-    if (action == 'delete') {
-      final proceed = await showDialog<bool>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-          title: const Text('Excluir Itens'),
-          content: Text('Tem certeza que deseja excluir ${itemsToProcess.length} itens?'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancelar'),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.red.shade600,
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              ),
-              child: const Text('Excluir'),
-            ),
-          ],
-        ),
-      );
-      if (proceed != true) return;
-
-      await provider.removeMultipleItems(itemsToProcess);
-    } else if (action == 'bought') {
-      for (var it in itemsToProcess) {
-        if (!it.isBought) await provider.toggleBought(it);
-      }
-    } else if (action == 'not_bought') {
-      for (var it in itemsToProcess) {
-        if (it.isBought) await provider.toggleBought(it);
+    if (_isSelectionMode && _lastSelectedItemId != null && _lastSelectedItemId != item.index) {
+      // Range selection: seleciona todos os itens entre o último selecionado e o atual
+      final idx1 = visibleItems.indexWhere((it) => it.index == _lastSelectedItemId);
+      final idx2 = visibleItems.indexWhere((it) => it.index == item.index);
+      if (idx1 != -1 && idx2 != -1) {
+        final start = idx1 < idx2 ? idx1 : idx2;
+        final end = idx1 > idx2 ? idx1 : idx2;
+        final rangeIndexes = <int>{};
+        for (int i = start; i <= end; i++) {
+          if (visibleItems[i].index != null) {
+            rangeIndexes.add(visibleItems[i].index!);
+          }
+        }
+        setState(() {
+          _selectedItemIndexes.addAll(rangeIndexes);
+          _lastSelectedItemId = item.index;
+        });
+        return;
       }
     }
 
-    _toggleSelectionMode();
+    _toggleItemSelection(item.index!);
+  }
+
+  void _handleBatchAction(String action) async {
+    final provider = Provider.of<ItemProvider>(context, listen: false);
+    final itemsToProcess = provider.items.where((it) => _selectedItemIndexes.contains(it.index)).toList();
+    if (itemsToProcess.isEmpty) {
+      _toggleSelectionMode();
+      return;
+    }
+
+    if (action == 'delete') {
+      final removed = List<Item>.from(itemsToProcess);
+      _toggleSelectionMode();
+      await provider.removeMultipleItems(removed);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: const Color(0xFF1E293B),
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            content: Row(
+              children: [
+                const Icon(Icons.delete_outline, color: Colors.redAccent, size: 20),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    '${removed.length} ${removed.length == 1 ? "item excluído" : "itens excluídos"}',
+                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w500),
+                  ),
+                ),
+              ],
+            ),
+            action: SnackBarAction(
+              label: 'DESFAZER',
+              textColor: const Color(0xFF10B981),
+              onPressed: () {
+                provider.restoreMultipleItems(removed);
+              },
+            ),
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
+      return;
+    } else if (action == 'toggle_bought') {
+      final bool allBought = itemsToProcess.every((it) => it.isBought);
+      await provider.batchSetBought(itemsToProcess, !allBought);
+      _toggleSelectionMode();
+      return;
+    } else if (action == 'bought') {
+      await provider.batchSetBought(itemsToProcess, true);
+      _toggleSelectionMode();
+      return;
+    } else if (action == 'not_bought') {
+      await provider.batchSetBought(itemsToProcess, false);
+      _toggleSelectionMode();
+      return;
+    }
+  }
+
+  Future<void> _showBatchSupermarketDialog(
+    BuildContext context,
+    ItemProvider provider,
+    List<Item> itemsToProcess,
+  ) async {
+    final controller = TextEditingController();
+    final markets = provider.supermarkets
+        .map((m) => m['name'] as String? ?? '')
+        .where((n) => n.trim().isNotEmpty)
+        .toSet()
+        .toList();
+
+    final result = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Theme.of(context).cardColor,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (ctx) {
+        return Padding(
+          padding: EdgeInsets.only(
+            top: 20,
+            left: 20,
+            right: 20,
+            bottom: MediaQuery.of(ctx).viewInsets.bottom + 20,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  margin: const EdgeInsets.only(bottom: 16),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.withValues(alpha: 0.3),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              Row(
+                children: [
+                  const Icon(Icons.storefront_rounded, color: Color(0xFF10B981)),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Definir Supermercado',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: Theme.of(ctx).colorScheme.onSurface,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Aplicar a ${itemsToProcess.length} itens selecionados:',
+                style: TextStyle(fontSize: 13, color: Colors.grey[500]),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: controller,
+                autofocus: true,
+                decoration: InputDecoration(
+                  hintText: 'Digite o nome do supermercado...',
+                  filled: true,
+                  fillColor: Theme.of(ctx).colorScheme.surface,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(color: Colors.grey.withValues(alpha: 0.2)),
+                  ),
+                  prefixIcon: const Icon(Icons.search),
+                ),
+              ),
+              const SizedBox(height: 12),
+              if (markets.isNotEmpty) ...[
+                Text(
+                  'Supermercados salvos:',
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.grey[400]),
+                ),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    ...markets.map((m) => ActionChip(
+                          avatar: const Icon(Icons.store, size: 16),
+                          label: Text(m),
+                          onPressed: () {
+                            controller.text = m;
+                          },
+                        )),
+                    ActionChip(
+                      avatar: const Icon(Icons.clear, size: 16, color: Colors.redAccent),
+                      label: const Text('Nenhum (Limpar)'),
+                      onPressed: () {
+                        Navigator.pop(ctx, '');
+                      },
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+              ],
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(ctx),
+                    child: const Text('Cancelar'),
+                  ),
+                  const SizedBox(width: 8),
+                  ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF10B981),
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                    onPressed: () {
+                      Navigator.pop(ctx, controller.text.trim());
+                    },
+                    child: const Text('Salvar'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        );
+      },
+    );
+
+    if (result != null && mounted) {
+      final marketName = result;
+      await provider.batchUpdateSupermarket(
+        itemsToProcess,
+        marketName.isEmpty ? null : marketName,
+      );
+      _toggleSelectionMode();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: const Color(0xFF1E293B),
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            content: Text(
+              marketName.isEmpty
+                  ? 'Supermercado removido de ${itemsToProcess.length} itens.'
+                  : 'Mercado "$marketName" definido para ${itemsToProcess.length} itens.',
+              style: const TextStyle(color: Colors.white),
+            ),
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _showBatchMoveDialog(
+    BuildContext context,
+    ItemProvider provider,
+    List<Item> itemsToProcess,
+  ) async {
+    final currentMonth = provider.currentMonth;
+    final otherMonths = provider.months.where((m) => m != currentMonth).toList();
+
+    if (otherMonths.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Não há outras listas ou meses disponíveis para mover.')),
+      );
+      return;
+    }
+
+    final selectedTarget = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(
+          children: const [
+            Icon(Icons.drive_file_move_outlined, color: Color(0xFF10B981)),
+            SizedBox(width: 8),
+            Text('Mover Itens', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          ],
+        ),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Mover ${itemsToProcess.length} itens da lista "$currentMonth" para:',
+                style: const TextStyle(fontSize: 13, color: Colors.grey),
+              ),
+              const SizedBox(height: 12),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 280),
+                child: ListView.separated(
+                  shrinkWrap: true,
+                  itemCount: otherMonths.length,
+                  separatorBuilder: (_, __) => const Divider(height: 1),
+                  itemBuilder: (context, idx) {
+                    final monthName = otherMonths[idx];
+                    return ListTile(
+                      leading: const Icon(Icons.calendar_today_outlined, size: 20),
+                      title: Text(monthName, style: const TextStyle(fontWeight: FontWeight.w600)),
+                      trailing: const Icon(Icons.arrow_forward_ios_rounded, size: 14),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+                      onTap: () => Navigator.pop(ctx, monthName),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancelar'),
+          ),
+        ],
+      ),
+    );
+
+    if (selectedTarget != null && mounted) {
+      await provider.moveItemsToMonth(itemsToProcess, selectedTarget);
+      _toggleSelectionMode();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: const Color(0xFF1E293B),
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            content: Text(
+              '${itemsToProcess.length} itens movidos para "$selectedTarget".',
+              style: const TextStyle(color: Colors.white),
+            ),
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    }
+  }
+
+
+  Widget _buildBatchActionBar(
+    BuildContext context,
+    ItemProvider provider,
+    List<Item> visibleItems,
+  ) {
+    final itemsToProcess = provider.items.where((it) => _selectedItemIndexes.contains(it.index)).toList();
+    final bool allSelected = visibleItems.isNotEmpty && visibleItems.every((it) => _selectedItemIndexes.contains(it.index));
+    final bool allSelectedBought = itemsToProcess.isNotEmpty && itemsToProcess.every((it) => it.isBought);
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+
+    return Positioned(
+      bottom: 0,
+      left: 0,
+      right: 0,
+      child: Container(
+        decoration: BoxDecoration(
+          color: isDark ? const Color(0xFF1E293B) : theme.primaryColor,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.35),
+              blurRadius: 16,
+              offset: const Offset(0, -4),
+            ),
+          ],
+        ),
+        child: SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  children: [
+                    InkWell(
+                      borderRadius: BorderRadius.circular(8),
+                      onTap: () {
+                        setState(() {
+                          if (allSelected) {
+                            _selectedItemIndexes.clear();
+                            _isSelectionMode = false;
+                            _lastSelectedItemId = null;
+                          } else {
+                            _selectedItemIndexes.addAll(
+                              visibleItems.map((e) => e.index).whereType<int>(),
+                            );
+                          }
+                        });
+                      },
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                        child: Row(
+                          children: [
+                            Icon(
+                              allSelected ? Icons.check_box : Icons.check_box_outline_blank,
+                              size: 20,
+                              color: Colors.white,
+                            ),
+                            const SizedBox(width: 6),
+                            const Text(
+                              'Todos',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 13,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.2),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        '${_selectedItemIndexes.length} selecionados',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                    const Spacer(),
+                    IconButton(
+                      icon: const Icon(Icons.close_rounded, color: Colors.white70),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                      tooltip: 'Cancelar seleção',
+                      onPressed: _toggleSelectionMode,
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceAround,
+                  children: [
+                    _buildBatchActionButton(
+                      icon: allSelectedBought ? Icons.remove_circle_outline : Icons.check_circle_outline,
+                      label: allSelectedBought ? 'Desmarcar' : 'Comprar',
+                      color: allSelectedBought ? Colors.orangeAccent : const Color(0xFF10B981),
+                      onPressed: () => _handleBatchAction('toggle_bought'),
+                    ),
+                    _buildBatchActionButton(
+                      icon: Icons.storefront_outlined,
+                      label: 'Mercado',
+                      color: Colors.lightBlueAccent,
+                      onPressed: () => _showBatchSupermarketDialog(context, provider, itemsToProcess),
+                    ),
+                    _buildBatchActionButton(
+                      icon: Icons.drive_file_move_outlined,
+                      label: 'Mover',
+                      color: Colors.amberAccent,
+                      onPressed: () => _showBatchMoveDialog(context, provider, itemsToProcess),
+                    ),
+                    _buildBatchActionButton(
+                      icon: Icons.delete_outline,
+                      label: 'Excluir',
+                      color: Colors.redAccent,
+                      onPressed: () => _handleBatchAction('delete'),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBatchActionButton({
+    required IconData icon,
+    required String label,
+    required Color color,
+    required VoidCallback onPressed,
+  }) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: onPressed,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.18),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(icon, color: color, size: 20),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              label,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   void _showAnimatedDialog(BuildContext context, Widget dialog) {
@@ -664,6 +1155,54 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> with SingleTick
                                 icon: const Icon(Icons.more_vert),
                                 tooltip: 'Mais opções',
                                 onSelected: (value) async {
+                                  if (value == 'clear_bought') {
+                                    final removed = await itemProvider.clearBoughtItems();
+                                    if (!context.mounted) return;
+                                    if (removed.isNotEmpty) {
+                                      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        SnackBar(
+                                          backgroundColor: const Color(0xFF1E293B),
+                                          behavior: SnackBarBehavior.floating,
+                                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                          content: Row(
+                                            children: [
+                                              const Icon(Icons.check_circle_outline, color: Color(0xFF10B981), size: 20),
+                                              const SizedBox(width: 8),
+                                              Expanded(
+                                                child: Text(
+                                                  '${removed.length} ${removed.length == 1 ? "item comprado removido" : "itens comprados removidos"}',
+                                                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w500),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                          action: SnackBarAction(
+                                            label: 'DESFAZER',
+                                            textColor: const Color(0xFF10B981),
+                                            onPressed: () {
+                                              itemProvider.restoreMultipleItems(removed);
+                                            },
+                                          ),
+                                          duration: const Duration(seconds: 4),
+                                        ),
+                                      );
+                                    } else {
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        const SnackBar(content: Text('Nenhum item marcado como comprado.')),
+                                      );
+                                    }
+                                  } else if (value == 'uncheck_all') {
+                                    await itemProvider.uncheckAllItems();
+                                    if (context.mounted) {
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        const SnackBar(
+                                          content: Text('Todos os itens foram desmarcados.'),
+                                          duration: Duration(seconds: 2),
+                                        ),
+                                      );
+                                    }
+                                  }
                                   if (value == 'receipt') {
                                     if (context.mounted) {
                                       Navigator.push(context, MaterialPageRoute(builder: (_) => const ReceiptScannerScreen()));
@@ -705,6 +1244,25 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> with SingleTick
                                   }
                                 },
                                 itemBuilder: (context) => [
+                                  const PopupMenuItem(
+                                    value: 'clear_bought',
+                                    child: ListTile(
+                                      leading: Icon(Icons.cleaning_services_outlined, color: Colors.teal),
+                                      title: Text('Limpar Comprados'),
+                                      dense: true,
+                                      contentPadding: EdgeInsets.zero,
+                                    ),
+                                  ),
+                                  const PopupMenuItem(
+                                    value: 'uncheck_all',
+                                    child: ListTile(
+                                      leading: Icon(Icons.remove_done_rounded, color: Colors.orange),
+                                      title: Text('Desmarcar Todos'),
+                                      dense: true,
+                                      contentPadding: EdgeInsets.zero,
+                                    ),
+                                  ),
+                                  const PopupMenuDivider(),
                                   const PopupMenuItem(
                                     value: 'purpose_caps',
                                     child: ListTile(
@@ -898,8 +1456,8 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> with SingleTick
                                     final element = flatList[index];
 
                                     final Widget childWidget = (element is String)
-                                        ? _buildCategoryHeader(context, element, groupedItems[element]!.length)
-                                        : _buildItemTile(element as Item, itemProvider);
+                                        ? _buildCategoryHeader(context, element, groupedItems[element]!)
+                                        : _buildItemTile(element as Item, itemProvider, filteredItems);
 
                                     final bool useAnimations = itemProvider.animationSettings['list_animations'] ?? true;
                                     if (!useAnimations) return childWidget;
@@ -943,50 +1501,7 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> with SingleTick
                   ),
                 
                 if (_isSelectionMode)
-                  Positioned(
-                    bottom: 0,
-                    left: 0,
-                    right: 0,
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: Theme.of(context).primaryColor,
-                        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-                        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.3), blurRadius: 10, offset: const Offset(0, -2))],
-                      ),
-                      child: SafeArea(
-                        top: false,
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-                          child: Row(
-                            children: [
-                              Text('${_selectedItemIndexes.length} selecionados', style: TextStyle(color: Theme.of(context).colorScheme.onPrimary, fontWeight: FontWeight.bold)),
-                              const Spacer(),
-                              IconButton(
-                                icon: const Icon(Icons.check_circle_outline, color: Colors.greenAccent),
-                                onPressed: () => _handleBatchAction('bought'),
-                                tooltip: 'Marcar Comprados',
-                              ),
-                              IconButton(
-                                icon: const Icon(Icons.remove_circle_outline, color: Colors.orangeAccent),
-                                onPressed: () => _handleBatchAction('not_bought'),
-                                tooltip: 'Desmarcar Comprados',
-                              ),
-                              IconButton(
-                                icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
-                                onPressed: () => _handleBatchAction('delete'),
-                                tooltip: 'Excluir Selecionados',
-                              ),
-                              const SizedBox(width: 8),
-                              TextButton(
-                                onPressed: _toggleSelectionMode,
-                                child: Text('CANCELAR', style: TextStyle(color: Theme.of(context).colorScheme.onPrimary.withValues(alpha: 0.8), fontSize: 12)),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
+                  _buildBatchActionBar(context, itemProvider, filteredItems),
               ],
             ),
           ),
@@ -1292,18 +1807,86 @@ if (_isMarketLocked)
     );
   }
 
-  Widget _buildCategoryHeader(BuildContext context, String category, int count) {
+  Widget _buildCategoryHeader(BuildContext context, String category, List<Item> categoryItems) {
     final emoji = ItemProvider.categoryEmojis[category] ?? '📦';
-    
+    final count = categoryItems.length;
+
+    final categoryIndexes = categoryItems.map((e) => e.index).whereType<int>().toSet();
+    final bool isAllSelected = _isSelectionMode &&
+        categoryIndexes.isNotEmpty &&
+        categoryIndexes.every((idx) => _selectedItemIndexes.contains(idx));
+    final bool isSomeSelected = _isSelectionMode &&
+        !isAllSelected &&
+        categoryIndexes.any((idx) => _selectedItemIndexes.contains(idx));
+
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 24, 20, 8),
-      child: Row(
-        children: [
-          Text('$emoji ', style: const TextStyle(fontSize: 18)),
-          Text(category.toUpperCase(), style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey[500], letterSpacing: 1.2)),
-          const Spacer(),
-          Text('$count itens', style: TextStyle(fontSize: 12, color: Colors.grey[400])),
-        ],
+      padding: const EdgeInsets.fromLTRB(16, 20, 16, 6),
+      child: Material(
+        color: isAllSelected
+            ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.12)
+            : Colors.transparent,
+        borderRadius: BorderRadius.circular(12),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: () {
+            if (_isSelectionMode) {
+              _toggleCategorySelection(categoryIndexes, isAllSelected);
+            }
+          },
+          onLongPress: () {
+            try {
+              Vibration.vibrate(duration: 40);
+            } catch (_) {
+              HapticFeedback.selectionClick();
+            }
+            _toggleCategorySelection(categoryIndexes, isAllSelected);
+          },
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            child: Row(
+              children: [
+                if (_isSelectionMode) ...[
+                  Icon(
+                    isAllSelected
+                        ? Icons.check_box
+                        : (isSomeSelected ? Icons.indeterminate_check_box : Icons.check_box_outline_blank),
+                    size: 20,
+                    color: isAllSelected || isSomeSelected
+                        ? Theme.of(context).colorScheme.primary
+                        : Colors.grey,
+                  ),
+                  const SizedBox(width: 8),
+                ],
+                Text('$emoji ', style: const TextStyle(fontSize: 18)),
+                Text(
+                  category.toUpperCase(),
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    color: isAllSelected ? Theme.of(context).colorScheme.primary : Colors.grey[500],
+                    letterSpacing: 1.2,
+                  ),
+                ),
+                const Spacer(),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Text(
+                    '$count itens',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: isAllSelected ? Theme.of(context).colorScheme.primary : Colors.grey[400],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -1358,7 +1941,7 @@ if (_isMarketLocked)
     itemProvider.updateItem(updatedItem);
   }
 
-  Widget _buildItemTile(Item item, ItemProvider itemProvider) {
+  Widget _buildItemTile(Item item, ItemProvider itemProvider, List<Item> visibleItems) {
     final bool isSelected = _selectedItemIndexes.contains(item.index);
     final bool isExpanded = _expandedIndex == item.index;
     
@@ -1388,8 +1971,7 @@ if (_isMarketLocked)
           }
         },
         onLongPress: itemProvider.isCurrentMonthFinalized ? null : () {
-          Vibration.vibrate(duration: 50);
-          _toggleItemSelection(item.index!);
+          _handleItemLongPress(item, visibleItems);
         },
         child: Opacity(
           opacity: item.isBought ? 0.5 : 1.0,

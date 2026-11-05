@@ -2694,6 +2694,7 @@ class ItemProvider with ChangeNotifier {
         category: _items[i].category,
         isBought: _items[i].isBought,
         barcode: _items[i].barcode,
+        supermarket: _items[i].supermarket,
       );
     }
     
@@ -2763,6 +2764,7 @@ class ItemProvider with ChangeNotifier {
         category: _items[i].category,
         isBought: _items[i].isBought,
         barcode: _items[i].barcode,
+        supermarket: _items[i].supermarket,
       );
     }
 
@@ -2862,6 +2864,227 @@ class ItemProvider with ChangeNotifier {
     });
 
     _enqueueOperation('sync_items', month, {});
+  }
+
+  /// Restaura múltiplos itens previamente excluídos (ação "Desfazer" de lote)
+  Future<void> restoreMultipleItems(List<Item> itemsToRestore) async {
+    await initialization;
+    final month = _service.currentMonthTitle;
+    if (isMonthFinalized(month)) {
+      debugPrint('Erro: Tentativa de restaurar itens em um mês finalizado.');
+      return;
+    }
+    if (itemsToRestore.isEmpty) return;
+
+    _items.addAll(itemsToRestore);
+
+    // Reindexa ordenadamente
+    for (var i = 0; i < _items.length; i++) {
+      _items[i] = Item(
+        index: i + 7,
+        name: _items[i].name,
+        quantity: _items[i].quantity,
+        unitPrice: _items[i].unitPrice,
+        isKg: _items[i].isKg,
+        category: _items[i].category,
+        isBought: _items[i].isBought,
+        barcode: _items[i].barcode,
+        supermarket: _items[i].supermarket,
+      );
+    }
+
+    _updateLocalMetrics(checkBudget: true);
+
+    try {
+      await _dbHelper.saveItems(month, _items);
+      _itemsCache[month] = List.from(_items);
+      _dbHelper.saveLocalBackupSnapshot();
+    } catch (e) {
+      debugPrint('Erro ao restaurar múltiplos itens no SQLite: $e');
+    }
+
+    _safeNotify();
+
+    // Notifica peer sync em tempo real
+    getSyncIdForMonth(month).then((sid) {
+      if (sid != null && sid.isNotEmpty) {
+        for (var item in itemsToRestore) {
+          SharedListSyncService.instance.publishAction(
+            syncId: sid,
+            action: 'add',
+            data: {
+              'name': item.name,
+              'quantity': item.quantity,
+              'unitPrice': item.unitPrice,
+              'isKg': item.isKg,
+              'category': item.category,
+              'isBought': item.isBought,
+              'barcode': item.barcode,
+              'supermarket': item.supermarket,
+            },
+          );
+        }
+      }
+    });
+
+    _enqueueOperation('sync_items', month, {});
+  }
+
+  /// Define status comprado/não comprado em lote
+  Future<void> batchSetBought(List<Item> targetItems, bool isBought) async {
+    await initialization;
+    final month = _service.currentMonthTitle;
+    if (isMonthFinalized(month)) return;
+    if (targetItems.isEmpty) return;
+
+    final targetIndexes = targetItems.map((e) => e.index).whereType<int>().toSet();
+    final targetNames = targetItems.map((e) => e.name.trim().toLowerCase()).toSet();
+
+    final prefs = await SharedPreferences.getInstance();
+
+    for (var it in _items) {
+      final match = (it.index != null && targetIndexes.contains(it.index)) ||
+          targetNames.contains(it.name.trim().toLowerCase());
+      if (match && it.isBought != isBought) {
+        it.isBought = isBought;
+        if (isBought) {
+          _addOrUpdatePriceHistoryCache(it, month, prefs);
+        }
+      }
+    }
+
+    _updateLocalMetrics(checkBudget: true);
+
+    try {
+      await _dbHelper.saveItems(month, _items);
+      _itemsCache[month] = List.from(_items);
+      _dbHelper.saveLocalBackupSnapshot();
+    } catch (e) {
+      debugPrint('Erro ao atualizar status em lote no SQLite: $e');
+    }
+
+    _safeNotify();
+
+    getSyncIdForMonth(month).then((sid) {
+      if (sid != null && sid.isNotEmpty) {
+        for (var it in targetItems) {
+          SharedListSyncService.instance.publishAction(
+            syncId: sid,
+            action: 'toggle',
+            data: {
+              'name': it.name,
+              'barcode': it.barcode,
+            },
+          );
+        }
+      }
+    });
+
+    _enqueueOperation('sync_items', month, {});
+  }
+
+  /// Remove todos os itens já comprados e retorna a lista removida para permitir 'Desfazer'
+  Future<List<Item>> clearBoughtItems() async {
+    final bought = _items.where((it) => it.isBought).toList();
+    if (bought.isNotEmpty) {
+      await removeMultipleItems(bought);
+    }
+    return bought;
+  }
+
+  /// Desmarca todos os itens comprados da lista
+  Future<void> uncheckAllItems() async {
+    final bought = _items.where((it) => it.isBought).toList();
+    if (bought.isNotEmpty) {
+      await batchSetBought(bought, false);
+    }
+  }
+
+  /// Atualiza o supermercado de múltiplos itens de uma vez
+  Future<void> batchUpdateSupermarket(List<Item> targetItems, String? supermarket) async {
+    await initialization;
+    final month = _service.currentMonthTitle;
+    if (isMonthFinalized(month)) return;
+    if (targetItems.isEmpty) return;
+
+    final targetIndexes = targetItems.map((e) => e.index).whereType<int>().toSet();
+    final targetNames = targetItems.map((e) => e.name.trim().toLowerCase()).toSet();
+
+    for (var it in _items) {
+      final match = (it.index != null && targetIndexes.contains(it.index)) ||
+          targetNames.contains(it.name.trim().toLowerCase());
+      if (match) {
+        it.supermarket = (supermarket != null && supermarket.trim().isNotEmpty)
+            ? supermarket.trim()
+            : null;
+      }
+    }
+
+    try {
+      await _dbHelper.saveItems(month, _items);
+      _itemsCache[month] = List.from(_items);
+      _dbHelper.saveLocalBackupSnapshot();
+    } catch (e) {
+      debugPrint('Erro ao atualizar supermercado em lote no SQLite: $e');
+    }
+
+    _safeNotify();
+    _enqueueOperation('sync_items', month, {});
+  }
+
+  /// Move múltiplos itens da lista atual para outro mês/lista
+  Future<void> moveItemsToMonth(List<Item> targetItems, String destinationMonth) async {
+    await initialization;
+    final currentMonth = _service.currentMonthTitle;
+    if (destinationMonth == currentMonth) return;
+    if (targetItems.isEmpty) return;
+
+    // 1. Carrega itens do mês de destino
+    List<Item> destItems = [];
+    if (_itemsCache.containsKey(destinationMonth)) {
+      destItems = List<Item>.from(_itemsCache[destinationMonth]!);
+    } else {
+      destItems = await _dbHelper.getItems(destinationMonth);
+    }
+
+    // 2. Prepara novos itens para o destino (desmarcados como não comprados por padrão ao mover)
+    final movedItems = targetItems.map((it) {
+      return Item(
+        name: it.name,
+        quantity: it.quantity,
+        unitPrice: it.unitPrice,
+        isKg: it.isKg,
+        category: it.category,
+        isBought: false,
+        barcode: it.barcode,
+        supermarket: it.supermarket,
+      );
+    }).toList();
+
+    destItems.addAll(movedItems);
+
+    // Reindexa destino
+    for (var i = 0; i < destItems.length; i++) {
+      destItems[i] = Item(
+        index: i + 7,
+        name: destItems[i].name,
+        quantity: destItems[i].quantity,
+        unitPrice: destItems[i].unitPrice,
+        isKg: destItems[i].isKg,
+        category: destItems[i].category,
+        isBought: destItems[i].isBought,
+        barcode: destItems[i].barcode,
+        supermarket: destItems[i].supermarket,
+      );
+    }
+
+    // Salva no destino
+    await _dbHelper.saveItems(destinationMonth, destItems);
+    _itemsCache[destinationMonth] = List.from(destItems);
+    _enqueueOperation('sync_items', destinationMonth, {});
+
+    // 3. Remove os itens do mês atual
+    await removeMultipleItems(targetItems);
   }
 
   Future<void> toggleBought(Item item) async {
