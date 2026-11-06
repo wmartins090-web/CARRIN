@@ -2416,15 +2416,54 @@ class ItemProvider with ChangeNotifier {
     try {
       final prefs = await SharedPreferences.getInstance();
       final deleted = prefs.getStringList('explicitly_deleted_months') ?? <String>[];
-      if (!deleted.any((e) => e.trim().toLowerCase() == title.trim().toLowerCase())) {
-        deleted.add(title.trim());
+      final titleNorm = title.trim();
+      final titleLower = titleNorm.toLowerCase();
+      if (!deleted.any((e) => e.trim().toLowerCase() == titleLower)) {
+        deleted.add(titleNorm);
         await prefs.setStringList('explicitly_deleted_months', deleted);
       }
       final rawSnap = prefs.getString('local_backup_carts_v1');
       if (rawSnap != null && rawSnap.isNotEmpty) {
         final decoded = jsonDecode(rawSnap);
-        if (decoded is Map<String, dynamic> && decoded.remove(title.trim()) != null) {
+        if (decoded is Map<String, dynamic>) {
+          decoded.removeWhere((k, _) => k.trim().toLowerCase() == titleLower);
           await prefs.setString('local_backup_carts_v1', jsonEncode(decoded));
+        }
+      }
+
+      // Purga registros desta lista dos caches de histórico para evitar restauração fantasma
+      final allKeys = prefs.getKeys();
+      for (final k in allKeys.where((k) => k.startsWith('cache_price_history_v2'))) {
+        final rawH = prefs.getString(k);
+        if (rawH != null && rawH.isNotEmpty) {
+          try {
+            final decodedH = jsonDecode(rawH);
+            if (decodedH is Map<String, dynamic>) {
+              bool changed = false;
+              for (final entry in decodedH.entries) {
+                if (entry.value is List) {
+                  final list = entry.value as List;
+                  final origLen = list.length;
+                  list.removeWhere((item) => item is Map && item['month']?.toString().trim().toLowerCase() == titleLower);
+                  if (list.length != origLen) changed = true;
+                }
+              }
+              if (changed) {
+                await prefs.setString(k, jsonEncode(decodedH));
+              }
+            }
+          } catch (_) {}
+        }
+      }
+      for (final k in allKeys.where((k) => k.startsWith('quick_summary'))) {
+        final rawQ = prefs.getString(k);
+        if (rawQ != null && rawQ.isNotEmpty) {
+          try {
+            final qMap = jsonDecode(rawQ);
+            if (qMap is Map && qMap['month']?.toString().trim().toLowerCase() == titleLower) {
+              await prefs.remove(k);
+            }
+          } catch (_) {}
         }
       }
     } catch (_) {}
@@ -2452,14 +2491,12 @@ class ItemProvider with ChangeNotifier {
       _safeNotify();
     }
     
-    // Se a sincronização com a nuvem estiver ativa, dispara a exclusão no Google Sheets sem travar a fila offline
+    // Se a sincronização com a nuvem estiver ativa, dispara a exclusão no Google Sheets
     if (isSyncEnabled) {
       try {
-        _service.deleteMonth(title).catchError((e) {
-          debugPrint('Aviso ao excluir aba "$title" no Google Sheets: $e');
-        });
+        await _service.deleteMonth(title);
       } catch (e) {
-        debugPrint('Erro ao invocar deleteMonth no Google Sheets: $e');
+        debugPrint('Aviso ao excluir aba "$title" no Google Sheets: $e');
       }
     }
   }

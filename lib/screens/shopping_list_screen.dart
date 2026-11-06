@@ -69,6 +69,40 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> with SingleTick
 
   bool _marketMode = false;
   bool _isMarketLocked = false;
+
+  void _toggleMarketMode() {
+    setState(() {
+      _marketMode = !_marketMode;
+      if (_marketMode) {
+        WakelockPlus.enable();
+        Vibration.vibrate(duration: 40);
+        _isMarketLocked = false;
+        _resetMarketInactivityTimer();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Row(
+              children: [
+                Icon(Icons.storefront_rounded, color: Colors.amber),
+                SizedBox(width: 8),
+                Expanded(child: Text('Modo Mercado ativo! A tela ficará ligada e bloqueará toques após 15s ocioso.')),
+              ],
+            ),
+            duration: Duration(seconds: 4),
+          ),
+        );
+      } else {
+        _isMarketLocked = false;
+        _marketInactivityTimer?.cancel();
+        WakelockPlus.disable();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Modo Mercado desativado.'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+    });
+  }
   Timer? _marketInactivityTimer;
   Key _limiterKey = UniqueKey();
   int? _expandedIndex;
@@ -725,12 +759,6 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> with SingleTick
                       onPressed: () => _showBatchSupermarketDialog(context, provider, itemsToProcess),
                     ),
                     _buildBatchActionButton(
-                      icon: Icons.drive_file_move_outlined,
-                      label: 'Mover',
-                      color: Colors.amberAccent,
-                      onPressed: () => _showBatchMoveDialog(context, provider, itemsToProcess),
-                    ),
-                    _buildBatchActionButton(
                       icon: Icons.delete_outline,
                       label: 'Excluir',
                       color: Colors.redAccent,
@@ -1090,16 +1118,10 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> with SingleTick
                             ),
                             centerTitle: true,
                             actions: [
-                              IconButton(
-                                icon: const Icon(Icons.nfc_rounded),
-                                tooltip: 'Lista Compartilhada (NFC / QR)',
-                                onPressed: () {
-                                  _openPairingSheet(defaultTransmit: false);
-                                },
-                              ),
                               const SyncIndicator(),
                               IconButton(
                                 icon: const Icon(Icons.search),
+                                tooltip: 'Buscar itens',
                                 onPressed: showLoader ? null : () {
                                   showSearch(
                                     context: context,
@@ -1111,87 +1133,12 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> with SingleTick
                                   );
                                 },
                               ),
-                              IconButton(
-                                icon: Icon(
-                                  _marketMode ? Icons.store_rounded : Icons.store_outlined,
-                                  color: _marketMode ? Colors.amber : null,
-                                ),
-                                tooltip: _marketMode ? 'Modo Mercado Ativo (Tela Ligada & Bloqueio Ocioso)' : 'Ativar Modo Mercado',
-                                onPressed: () {
-                                  setState(() {
-                                    _marketMode = !_marketMode;
-                                    if (_marketMode) {
-                                      WakelockPlus.enable();
-                                      Vibration.vibrate(duration: 40);
-                                      _isMarketLocked = false;
-                                      _resetMarketInactivityTimer();
-                                      ScaffoldMessenger.of(context).showSnackBar(
-                                        const SnackBar(
-                                          content: Row(
-                                            children: [
-                                              Icon(Icons.storefront_rounded, color: Colors.amber),
-                                              SizedBox(width: 8),
-                                              Expanded(child: Text('Modo Mercado ativo! A tela ficará ligada e bloqueará toques após 15s ocioso.')),
-                                            ],
-                                          ),
-                                          duration: Duration(seconds: 4),
-                                        ),
-                                      );
-                                    } else {
-                                      _isMarketLocked = false;
-                                      _marketInactivityTimer?.cancel();
-                                      WakelockPlus.disable();
-                                      ScaffoldMessenger.of(context).showSnackBar(
-                                        const SnackBar(
-                                          content: Text('Modo Mercado desativado.'),
-                                          duration: Duration(seconds: 2),
-                                        ),
-                                      );
-                                    }
-                                  });
-                                },
-                              ),
                               PopupMenuButton<String>(
                                 icon: const Icon(Icons.more_vert),
                                 tooltip: 'Mais opções',
                                 onSelected: (value) async {
-                                  if (value == 'clear_bought') {
-                                    final removed = await itemProvider.clearBoughtItems();
-                                    if (!context.mounted) return;
-                                    if (removed.isNotEmpty) {
-                                      ScaffoldMessenger.of(context).hideCurrentSnackBar();
-                                      ScaffoldMessenger.of(context).showSnackBar(
-                                        SnackBar(
-                                          backgroundColor: const Color(0xFF1E293B),
-                                          behavior: SnackBarBehavior.floating,
-                                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                                          content: Row(
-                                            children: [
-                                              const Icon(Icons.check_circle_outline, color: Color(0xFF10B981), size: 20),
-                                              const SizedBox(width: 8),
-                                              Expanded(
-                                                child: Text(
-                                                  '${removed.length} ${removed.length == 1 ? "item comprado removido" : "itens comprados removidos"}',
-                                                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w500),
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                          action: SnackBarAction(
-                                            label: 'DESFAZER',
-                                            textColor: const Color(0xFF10B981),
-                                            onPressed: () {
-                                              itemProvider.restoreMultipleItems(removed);
-                                            },
-                                          ),
-                                          duration: const Duration(seconds: 4),
-                                        ),
-                                      );
-                                    } else {
-                                      ScaffoldMessenger.of(context).showSnackBar(
-                                        const SnackBar(content: Text('Nenhum item marcado como comprado.')),
-                                      );
-                                    }
+                                  if (value == 'toggle_market_mode') {
+                                    _toggleMarketMode();
                                   } else if (value == 'uncheck_all') {
                                     await itemProvider.uncheckAllItems();
                                     if (context.mounted) {
@@ -1202,12 +1149,7 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> with SingleTick
                                         ),
                                       );
                                     }
-                                  }
-                                  if (value == 'receipt') {
-                                    if (context.mounted) {
-                                      Navigator.push(context, MaterialPageRoute(builder: (_) => const ReceiptScannerScreen()));
-                                    }
-                                  } else if (value == 'verify_receipt') {
+                                  } else if (value == 'verify_receipt' || value == 'receipt') {
                                     if (context.mounted) {
                                       Navigator.push(
                                         context,
@@ -1220,7 +1162,7 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> with SingleTick
                                       );
                                     }
                                   } else if (value == 'share') {
-                                    _shareList(context, itemProvider);
+                                    _openPairingSheet(defaultTransmit: false);
                                   } else if (value == 'finalize') {
                                     _toggleFinalizeStatus(context, itemProvider);
                                   } else if (value == 'purpose_caps') {
@@ -1244,11 +1186,14 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> with SingleTick
                                   }
                                 },
                                 itemBuilder: (context) => [
-                                  const PopupMenuItem(
-                                    value: 'clear_bought',
+                                  PopupMenuItem(
+                                    value: 'toggle_market_mode',
                                     child: ListTile(
-                                      leading: Icon(Icons.cleaning_services_outlined, color: Colors.teal),
-                                      title: Text('Limpar Comprados'),
+                                      leading: Icon(
+                                        _marketMode ? Icons.store_rounded : Icons.store_outlined,
+                                        color: _marketMode ? Colors.amber : null,
+                                      ),
+                                      title: Text(_marketMode ? 'Desativar Modo Mercado' : 'Ativar Modo Mercado'),
                                       dense: true,
                                       contentPadding: EdgeInsets.zero,
                                     ),
@@ -1263,6 +1208,24 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> with SingleTick
                                     ),
                                   ),
                                   const PopupMenuDivider(),
+                                  const PopupMenuItem(
+                                    value: 'share',
+                                    child: ListTile(
+                                      leading: Icon(Icons.nfc_rounded, color: Color(0xFF10B981)),
+                                      title: Text('Compartilhar Lista (NFC / QR)'),
+                                      dense: true,
+                                      contentPadding: EdgeInsets.zero,
+                                    ),
+                                  ),
+                                  const PopupMenuItem(
+                                    value: 'verify_receipt',
+                                    child: ListTile(
+                                      leading: Icon(Icons.receipt_long_outlined, color: Colors.teal),
+                                      title: Text('Conferir Nota Fiscal'),
+                                      dense: true,
+                                      contentPadding: EdgeInsets.zero,
+                                    ),
+                                  ),
                                   const PopupMenuItem(
                                     value: 'purpose_caps',
                                     child: ListTile(
@@ -1290,33 +1253,7 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> with SingleTick
                                       contentPadding: EdgeInsets.zero,
                                     ),
                                   ),
-                                  const PopupMenuItem(
-                                    value: 'verify_receipt',
-                                    child: ListTile(
-                                      leading: Icon(Icons.fact_check_outlined, color: Colors.teal),
-                                      title: Text('Conferir Cupom Fiscal (vs Carrinho)'),
-                                      dense: true,
-                                      contentPadding: EdgeInsets.zero,
-                                    ),
-                                  ),
-                                  const PopupMenuItem(
-                                    value: 'receipt',
-                                    child: ListTile(
-                                      leading: Icon(Icons.receipt_long_outlined),
-                                      title: Text('Escanear Nota Fiscal'),
-                                      dense: true,
-                                      contentPadding: EdgeInsets.zero,
-                                    ),
-                                  ),
-                                  const PopupMenuItem(
-                                    value: 'share',
-                                    child: ListTile(
-                                      leading: Icon(Icons.share_outlined),
-                                      title: Text('Compartilhar Lista'),
-                                      dense: true,
-                                      contentPadding: EdgeInsets.zero,
-                                    ),
-                                  ),
+                                  const PopupMenuDivider(),
                                   PopupMenuItem(
                                     value: 'finalize',
                                     child: ListTile(

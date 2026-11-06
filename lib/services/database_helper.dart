@@ -353,7 +353,10 @@ class DatabaseHelper {
 
   Future<void> deleteMonth(String title) async {
     final db = await database;
-    await db.delete('months', where: 'title = ?', whereArgs: [title]);
+    await db.transaction((txn) async {
+      await txn.delete('items', where: 'month_title = ?', whereArgs: [title]);
+      await txn.delete('months', where: 'title = ?', whereArgs: [title]);
+    });
   }
 
   Future<void> updateMonthSummary(String title, Map<String, double> summary) async {
@@ -1370,8 +1373,11 @@ class DatabaseHelper {
       final monthRows = await db.query('months', orderBy: 'rowid ASC');
       if (monthRows.isEmpty) return;
 
+      final deletedList = prefs.getStringList('explicitly_deleted_months') ?? const <String>[];
+      final Set<String> explicitlyDeleted = deletedList.map((e) => e.trim().toLowerCase()).toSet();
+
       final Map<String, dynamic> snapshot = {};
-      // Preserva backups anteriores de meses que ainda não estejam vazios
+      // Preserva backups anteriores de meses que ainda não estejam vazios nem deletados
       final existingRaw = prefs.getString('local_backup_carts_v1');
       if (existingRaw != null && existingRaw.isNotEmpty) {
         try {
@@ -1381,10 +1387,11 @@ class DatabaseHelper {
           }
         } catch (_) {}
       }
+      snapshot.removeWhere((k, _) => explicitlyDeleted.contains(k.trim().toLowerCase()));
 
       for (final m in monthRows) {
         final title = (m['title'] as String? ?? '').trim();
-        if (isDummySheetName(title)) continue;
+        if (isDummySheetName(title) || explicitlyDeleted.contains(title.toLowerCase())) continue;
         final itemRows = await db.query(
           'items',
           where: 'month_title = ?',
@@ -1423,10 +1430,15 @@ class DatabaseHelper {
 
       bool isDeleted(String title) => explicitlyDeleted.contains(title.trim().toLowerCase());
 
-      // 1. Remove abas fantasmas ('Página1', 'Sheet1') que estejam vazias
+      // 1. Remove abas fantasmas ('Página1', 'Sheet1') vazias e listas explicitamente deletadas
       final allMonths = await db.query('months');
       for (final m in allMonths) {
         final t = (m['title'] as String? ?? '').trim();
+        if (isDeleted(t)) {
+          await db.delete('items', where: 'month_title = ?', whereArgs: [t]);
+          await db.delete('months', where: 'title = ?', whereArgs: [t]);
+          continue;
+        }
         if (isDummySheetName(t)) {
           final c = Sqflite.firstIntValue(
                 await db.rawQuery('SELECT COUNT(*) FROM items WHERE month_title = ?', [t]),
@@ -1436,6 +1448,12 @@ class DatabaseHelper {
             await db.delete('months', where: 'title = ?', whereArgs: [t]);
           }
         }
+      }
+
+      // Purga também quaisquer itens órfãos pertencentes a listas explicitamente deletadas
+      for (final del in explicitlyDeleted) {
+        await db.delete('items', where: 'LOWER(TRIM(month_title)) = ?', whereArgs: [del]);
+        await db.delete('months', where: 'LOWER(TRIM(title)) = ?', whereArgs: [del]);
       }
 
       // 2. Garante que qualquer month_title presente em `items` exista na tabela `months`
