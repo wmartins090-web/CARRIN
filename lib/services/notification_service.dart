@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -153,13 +154,36 @@ class NotificationService {
       SharedPreferences.getInstance().then((prefs) {
         prefs.setBool('update_notification_posted', false);
       });
-      String? v;
-      int? b;
-      final parts = payload.split(':');
-      if (parts.length >= 2) v = parts[1];
-      if (parts.length >= 3) b = int.tryParse(parts[2]);
-      AppUpdateDialog.openFromNotification(autoStartDownload: true, targetVersion: v, targetBuildNumber: b);
+      final parsed = _parseCheckUpdatePayload(payload);
+      AppUpdateDialog.openFromNotification(
+        autoStartDownload: true,
+        targetVersion: parsed.version,
+        targetBuildNumber: parsed.buildNumber,
+        fallbackNotes: parsed.notes,
+      );
     }
+  }
+
+  ({String? version, int? buildNumber, List<String>? notes}) _parseCheckUpdatePayload(String payload) {
+    if (payload.startsWith('check_update_json:')) {
+      try {
+        final raw = payload.substring('check_update_json:'.length);
+        final map = jsonDecode(raw) as Map<String, dynamic>;
+        final v = map['v']?.toString();
+        final b = int.tryParse(map['b']?.toString() ?? '');
+        final rawNotes = map['notes'];
+        final notes = rawNotes is List
+            ? rawNotes.map((e) => e.toString().trim()).where((s) => s.isNotEmpty).toList()
+            : null;
+        return (version: v, buildNumber: b, notes: (notes != null && notes.isNotEmpty) ? notes : null);
+      } catch (_) {}
+    }
+    String? v;
+    int? b;
+    final parts = payload.split(':');
+    if (parts.length >= 2) v = parts[1];
+    if (parts.length >= 3) b = int.tryParse(parts[2]);
+    return (version: v, buildNumber: b, notes: null);
   }
 
   /// Verifica se o aplicativo foi aberto através de um clique em notificação
@@ -176,13 +200,14 @@ class NotificationService {
             });
           }
         } else if (payload != null && payload.startsWith('check_update')) {
-          String? v;
-          int? b;
-          final parts = payload.split(':');
-          if (parts.length >= 2) v = parts[1];
-          if (parts.length >= 3) b = int.tryParse(parts[2]);
+          final parsed = _parseCheckUpdatePayload(payload);
           Future.delayed(const Duration(milliseconds: 600), () {
-            AppUpdateDialog.openFromNotification(autoStartDownload: true, targetVersion: v, targetBuildNumber: b);
+            AppUpdateDialog.openFromNotification(
+              autoStartDownload: true,
+              targetVersion: parsed.version,
+              targetBuildNumber: parsed.buildNumber,
+              fallbackNotes: parsed.notes,
+            );
           });
         }
       }
@@ -244,6 +269,7 @@ class NotificationService {
     required String version,
     required int buildNumber,
     String? title,
+    List<String>? notes,
   }) async {
     try {
       final isDismissed = await AppUpdateService.instance.isBuildDismissed(buildNumber, version: version);
@@ -252,23 +278,35 @@ class NotificationService {
         return;
       }
 
+      final cleanNotes = (notes ?? const <String>[])
+          .map((e) => e.trim())
+          .where((e) => e.isNotEmpty)
+          .toList();
       final header = title ?? 'Nova Versão do CARRIN Disponível (v$version)';
-      const body = 'Uma nova versão com melhorias está pronta. Toque para abrir e atualizar.';
+      final body = cleanNotes.isNotEmpty
+          ? cleanNotes.join('\n')
+          : 'Uma nova versão com melhorias está pronta. Toque para abrir e atualizar.';
+      final encodedPayload = 'check_update_json:${jsonEncode({
+        'v': version,
+        'b': buildNumber,
+        'notes': cleanNotes,
+      })}';
       
-      const androidDetails = AndroidNotificationDetails(
+      final androidDetails = AndroidNotificationDetails(
         updateChannelId,
         updateChannelName,
         channelDescription: updateChannelDescription,
         importance: Importance.high,
         priority: Priority.high,
-        color: Color(0xFF10B981),
-        ledColor: Color(0xFF10B981),
+        color: const Color(0xFF10B981),
+        ledColor: const Color(0xFF10B981),
         playSound: true,
         enableVibration: true,
         autoCancel: true,
         icon: cartNotificationIcon,
-        largeIcon: DrawableResourceAndroidBitmap(appLogoIcon),
-        actions: [
+        largeIcon: const DrawableResourceAndroidBitmap(appLogoIcon),
+        styleInformation: BigTextStyleInformation(body),
+        actions: const [
           AndroidNotificationAction(
             'dismiss_update_action',
             'Lembrar mais tarde',
@@ -281,8 +319,8 @@ class NotificationService {
         updateAvailableNotificationId,
         header,
         body,
-        const NotificationDetails(android: androidDetails),
-        payload: 'check_update:$version:$buildNumber',
+        NotificationDetails(android: androidDetails),
+        payload: encodedPayload,
       );
 
       final prefs = await SharedPreferences.getInstance();

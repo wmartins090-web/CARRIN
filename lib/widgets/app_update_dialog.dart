@@ -60,11 +60,12 @@ class AppUpdateDialog extends StatefulWidget {
     return show(context, info, readyApkPath: filePath);
   }
 
-  /// Abre a tela de atualização diretamente com download automático ao tocar na notificação
+  /// Abre a tela de atualização diretamente ao tocar na notificação, preservando as notas da versão.
   static Future<void> openFromNotification({
     bool autoStartDownload = true,
     String? targetVersion,
     int? targetBuildNumber,
+    List<String>? fallbackNotes,
   }) async {
     if (isShowing) return;
 
@@ -83,8 +84,28 @@ class AppUpdateDialog extends StatefulWidget {
     if (ctx == null) return;
 
     AppUpdateInfo? info = await AppUpdateService.instance.checkForUpdate(ignoreDismissed: true);
-    
-    // Fallback: se a consulta remota demorar ou cache CDN Fastly do GitHub estiver atrasado
+    info ??= await AppUpdateService.instance.fetchLatestUpdateInfo();
+
+    final cleanFallbackNotes = (fallbackNotes ?? const <String>[])
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .toList();
+
+    if (info != null && info.releaseNotes.isEmpty && cleanFallbackNotes.isNotEmpty) {
+      info = AppUpdateInfo(
+        version: info.version,
+        buildNumber: info.buildNumber,
+        releaseDate: info.releaseDate,
+        title: info.title,
+        releaseNotes: cleanFallbackNotes,
+        apkUrl: info.apkUrl,
+        sizeBytes: info.sizeBytes,
+        isActive: info.isActive,
+        forceUpdate: info.forceUpdate,
+      );
+    }
+
+    // Fallback caso o servidor demore a responder no momento do clique
     if (info == null && targetVersion != null && targetVersion.isNotEmpty) {
       final cleanV = targetVersion.replaceFirst('v', '').trim();
       final bNum = targetBuildNumber ?? int.tryParse(cleanV.replaceAll('.', '')) ?? (AppUpdateService.currentBuildNumber + 1);
@@ -93,7 +114,9 @@ class AppUpdateDialog extends StatefulWidget {
         buildNumber: bNum,
         releaseDate: DateTime.now().toIso8601String(),
         title: 'CARRIN v$cleanV',
-        releaseNotes: ['Atualização com melhorias de estabilidade e novas funções'],
+        releaseNotes: cleanFallbackNotes.isNotEmpty
+            ? cleanFallbackNotes
+            : ['Atualização com melhorias de estabilidade e novas funções.'],
         apkUrl: 'https://pub-4bdefe4ec784476eae543ebde4bd2f20.r2.dev/carrin_v$cleanV.apk',
       );
     }
@@ -120,7 +143,7 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
   String? _errorMessage;
   bool _needsInstallPermission = false;
   String? _downloadedFilePath;
-  bool _isNotesExpanded = false;
+  bool _isNotesExpanded = true;
 
   @override
   void initState() {
@@ -153,10 +176,17 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
   }
 
   Future<void> _startDownloadAndInstall() async {
+    final partialBytes = await AppUpdateService.instance.getPartialApkBytes(widget.updateInfo);
+    final knownTotal = widget.updateInfo.sizeBytes ?? 0;
+    if (!mounted) return;
     setState(() {
       _isDownloading = true;
       _errorMessage = null;
-      _progress = 0.0;
+      _receivedBytes = partialBytes;
+      _totalBytes = knownTotal;
+      _progress = (knownTotal > 0 && partialBytes > 0)
+          ? (partialBytes / knownTotal).clamp(0.0, 1.0)
+          : 0.0;
     });
 
     try {
@@ -164,6 +194,7 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
         apkUrl: widget.updateInfo.apkUrl,
         buildNumber: widget.updateInfo.buildNumber,
         version: widget.updateInfo.version,
+        expectedSizeBytes: widget.updateInfo.sizeBytes,
         onProgress: (progress, received, total) {
           if (mounted) {
             setState(() {
@@ -198,10 +229,14 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
 
       await _triggerInstall(file.path);
     } catch (e) {
+      final savedBytes = await AppUpdateService.instance.getPartialApkBytes(widget.updateInfo);
       if (mounted) {
+        final rawErr = e.toString().replaceAll('Exception: ', '');
         setState(() {
           _isDownloading = false;
-          _errorMessage = e.toString().replaceAll('Exception: ', '');
+          _errorMessage = savedBytes > 0
+              ? '$rawErr\n(${_formatMb(savedBytes)} salvos; toque em Instalar Atualização para continuar de onde parou.)'
+              : rawErr;
         });
       }
     }
@@ -376,12 +411,15 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Text(
-                            _isNotesExpanded ? 'Ocultar notas da versão' : 'Notas da versão',
-                            style: TextStyle(
-                              fontSize: 12.5,
-                              fontWeight: FontWeight.w600,
-                              color: colorScheme.primary,
+                          Flexible(
+                            child: Text(
+                              _isNotesExpanded ? 'Ocultar notas da versão' : 'Notas da versão',
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 12.5,
+                                fontWeight: FontWeight.w600,
+                                color: colorScheme.primary,
+                              ),
                             ),
                           ),
                           const SizedBox(width: 4),

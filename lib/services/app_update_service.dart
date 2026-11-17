@@ -78,8 +78,8 @@ class AppUpdateService {
   AppUpdateService._();
   static final AppUpdateService instance = AppUpdateService._();
 
-  static String currentAppVersion = '1.3.631';
-  static int currentBuildNumber = 631;
+  static String currentAppVersion = '1.3.632';
+  static int currentBuildNumber = 632;
 
   /// Inicializa dinamicamente as informações reais do pacote instalado no Android
   static Future<void> initPackageInfo() async {
@@ -358,6 +358,7 @@ class AppUpdateService {
         apkUrl: info.apkUrl,
         buildNumber: info.buildNumber,
         version: info.version,
+        expectedSizeBytes: info.sizeBytes,
         onProgress: (prog, received, total) {
           _backgroundProgress = prog;
           _backgroundReceived = received;
@@ -390,14 +391,76 @@ class AppUpdateService {
     }
   }
 
-  /// Baixa o APK com acompanhamento de progresso em tempo real e escrita atômica (.part -> .apk)
+  /// Retorna quantos bytes já foram baixados em arquivo parcial (.part) para esta versão.
+  Future<int> getPartialApkBytes(AppUpdateInfo info) async {
+    try {
+      final tempDir = await getTemporaryDirectory();
+      final partFile = File('${tempDir.path}/carrin_v${info.version}_b${info.buildNumber}.apk.part');
+      if (await partFile.exists()) {
+        return await partFile.length();
+      }
+    } catch (_) {}
+    return 0;
+  }
+
+  /// Envia requisição GET preservando o cabeçalho [Range] mesmo através de redirecionamentos (301/302/307/308).
+  Future<http.StreamedResponse> _sendGetWithRedirects(
+    http.Client client,
+    Uri initialUri, {
+    int startByte = 0,
+    int maxRedirects = 5,
+  }) async {
+    Uri currentUri = initialUri;
+    for (int hop = 0; hop <= maxRedirects; hop++) {
+      final request = http.Request('GET', currentUri);
+      request.followRedirects = false;
+      request.headers['User-Agent'] = 'CARRIN-App/1.0';
+      if (startByte > 0) {
+        request.headers['Range'] = 'bytes=$startByte-';
+      }
+
+      final response = await client.send(request).timeout(const Duration(seconds: 20));
+      final code = response.statusCode;
+      if ((code == 301 || code == 302 || code == 303 || code == 307 || code == 308) &&
+          response.headers['location'] != null) {
+        final loc = response.headers['location']!;
+        await response.stream.drain<void>().catchError((_) {});
+        currentUri = currentUri.resolve(loc);
+        continue;
+      }
+      return response;
+    }
+    throw Exception('Excesso de redirecionamentos ao baixar o APK.');
+  }
+
+  int _parseTotalBytesFromContentRange(String? contentRange, int existingBytes, int? contentLength) {
+    if (contentRange != null && contentRange.isNotEmpty) {
+      final match = RegExp(r'bytes\s+\d+-\d+/(\d+)').firstMatch(contentRange);
+      if (match != null) {
+        final parsed = int.tryParse(match.group(1)!);
+        if (parsed != null && parsed > 0) return parsed;
+      }
+    }
+    if (contentLength != null && contentLength > 0) {
+      return existingBytes + contentLength;
+    }
+    return 0;
+  }
+
+  /// Baixa o APK com retomada automática (HTTP Range 206), escrita incremental em `.part`
+  /// e recuperação automática caso a internet caia ou troque entre Wi-Fi e dados móveis.
   Future<File> downloadApk({
     required String apkUrl,
     int? buildNumber,
     String? version,
+    int? expectedSizeBytes,
+    @visibleForTesting Directory? targetDirectoryOverride,
+    @visibleForTesting bool skipApkValidationForTesting = false,
+    @visibleForTesting Duration retryDelay = const Duration(milliseconds: 1800),
+    @visibleForTesting int maxRetriesPerUrl = 4,
+    @visibleForTesting http.Client Function()? httpClientFactory,
     void Function(double progress, int receivedBytes, int totalBytes)? onProgress,
   }) async {
-    final client = http.Client();
     final List<String> candidateUrls = [apkUrl];
     final String fileName = apkUrl.split('/').last.split('?').first;
     if (apkUrl.contains('pub-4bdefe4ec784476eae543ebde4bd2f20.r2.dev')) {
@@ -407,75 +470,135 @@ class AppUpdateService {
       candidateUrls.add('https://pub-4bdefe4ec784476eae543ebde4bd2f20.r2.dev/$fileName');
     }
 
+    final Directory dir = targetDirectoryOverride ?? await getTemporaryDirectory();
+    final String suffix = (version != null && buildNumber != null)
+        ? 'carrin_v${version}_b$buildNumber'
+        : 'carrin_update';
+    final File apkFile = File('${dir.path}/$suffix.apk');
+    final File partFile = File('${dir.path}/$suffix.apk.part');
+
     Exception? lastException;
-    for (int attempt = 0; attempt < candidateUrls.length; attempt++) {
-      final currentUrl = candidateUrls[attempt];
-      try {
-        final uri = Uri.parse(currentUrl);
-        final request = http.Request('GET', uri);
-        request.headers['User-Agent'] = 'CARRIN-App/1.0';
-        final response = await client.send(request);
+    for (int urlIdx = 0; urlIdx < candidateUrls.length; urlIdx++) {
+      final currentUrl = candidateUrls[urlIdx];
+      final uri = Uri.parse(currentUrl);
 
-      if (response.statusCode != 200 && response.statusCode != 302) {
-        throw Exception('Servidor retornou código ${response.statusCode} ao baixar o APK.');
-      }
+      for (int attempt = 0; attempt < maxRetriesPerUrl; attempt++) {
+        // Cria um HttpClient novo por tentativa para evitar reaproveitar socket morto após troca Wi-Fi <-> 4G
+        final client = (httpClientFactory ?? http.Client.new)();
+        IOSink? sink;
+        try {
+          int existingBytes = await partFile.exists() ? await partFile.length() : 0;
+          if (expectedSizeBytes != null && expectedSizeBytes > 0 && existingBytes > expectedSizeBytes) {
+            await partFile.delete().catchError((_) => partFile);
+            existingBytes = 0;
+          }
 
-      http.StreamedResponse finalResponse = response;
-      if (response.statusCode == 302 && response.headers.containsKey('location')) {
-        final redirectUri = Uri.parse(response.headers['location']!);
-        final redirectRequest = http.Request('GET', redirectUri);
-        finalResponse = await client.send(redirectRequest);
-      }
+          final response = await _sendGetWithRedirects(
+            client,
+            uri,
+            startByte: existingBytes,
+          );
 
-      final totalBytes = finalResponse.contentLength ?? 0;
-      final tempDir = await getTemporaryDirectory();
-      final suffix = (version != null && buildNumber != null)
-          ? 'carrin_v${version}_b$buildNumber'
-          : 'carrin_update';
-      final apkFile = File('${tempDir.path}/$suffix.apk');
-      final partFile = File('${tempDir.path}/$suffix.apk.part');
+          int totalBytes = expectedSizeBytes ?? 0;
+          int receivedBytes = 0;
 
-      if (await partFile.exists()) {
-        await partFile.delete().catchError((_) => partFile);
-      }
+          if (response.statusCode == 416) {
+            final cr = response.headers['content-range'];
+            await response.stream.drain<void>().catchError((_) {});
+            final totalMatch = cr != null ? RegExp(r'/(\d+)').firstMatch(cr) : null;
+            final remoteTotal = totalMatch != null ? int.tryParse(totalMatch.group(1)!) : null;
+            if (remoteTotal != null && existingBytes == remoteTotal) {
+              totalBytes = remoteTotal;
+              receivedBytes = existingBytes;
+            } else {
+              await partFile.delete().catchError((_) => partFile);
+              continue;
+            }
+          } else if (response.statusCode == 206 && existingBytes > 0) {
+            final cr = response.headers['content-range'];
+            totalBytes = _parseTotalBytesFromContentRange(cr, existingBytes, response.contentLength);
+            final startMatch = cr != null ? RegExp(r'bytes\s+(\d+)-').firstMatch(cr) : null;
+            final startOffset = startMatch != null ? int.tryParse(startMatch.group(1)!) : existingBytes;
 
-      final sink = partFile.openWrite();
-      int receivedBytes = 0;
+            if (startOffset == existingBytes) {
+              receivedBytes = existingBytes;
+              sink = partFile.openWrite(mode: FileMode.append);
+            } else {
+              receivedBytes = 0;
+              sink = partFile.openWrite(mode: FileMode.write);
+            }
 
-      await for (final chunk in finalResponse.stream) {
-        sink.add(chunk);
-        receivedBytes += chunk.length;
-        final progress = totalBytes > 0 ? (receivedBytes / totalBytes) : 0.0;
-        onProgress?.call(progress, receivedBytes, totalBytes);
-      }
+            if (totalBytes > 0) {
+              onProgress?.call((receivedBytes / totalBytes).clamp(0.0, 1.0), receivedBytes, totalBytes);
+            }
 
-      await sink.flush();
-      await sink.close();
+            await for (final chunk in response.stream.timeout(const Duration(seconds: 20))) {
+              sink.add(chunk);
+              receivedBytes += chunk.length;
+              final progress = totalBytes > 0 ? (receivedBytes / totalBytes).clamp(0.0, 1.0) : 0.0;
+              onProgress?.call(progress, receivedBytes, totalBytes);
+            }
+          } else if (response.statusCode == 200) {
+            totalBytes = response.contentLength ?? totalBytes;
+            receivedBytes = 0;
+            sink = partFile.openWrite(mode: FileMode.write);
 
-      if (totalBytes > 0 && receivedBytes < totalBytes) {
-        await partFile.delete().catchError((_) => partFile);
-        throw Exception('Download incompleto ( de  bytes recebidos).');
-      }
+            await for (final chunk in response.stream.timeout(const Duration(seconds: 20))) {
+              sink.add(chunk);
+              receivedBytes += chunk.length;
+              final progress = totalBytes > 0 ? (receivedBytes / totalBytes).clamp(0.0, 1.0) : 0.0;
+              onProgress?.call(progress, receivedBytes, totalBytes);
+            }
+          } else {
+            await response.stream.drain<void>().catchError((_) {});
+            throw Exception('Servidor retornou código ${response.statusCode} ao baixar o APK.');
+          }
 
-      final isValid = await isApkFileValid(partFile, expectedBytes: totalBytes > 0 ? totalBytes : null);
-      if (!isValid) {
-        await partFile.delete().catchError((_) => partFile);
-        throw Exception('Arquivo APK baixado está corrompido ou incompleto.');
-      }
+          if (sink != null) {
+            await sink.flush();
+            await sink.close();
+            sink = null;
+          }
 
-      if (await apkFile.exists()) {
-        await apkFile.delete().catchError((_) => apkFile);
-      }
-      await partFile.rename(apkFile.path);
+          final actualLen = await partFile.exists() ? await partFile.length() : 0;
+          if (totalBytes > 0 && actualLen < totalBytes) {
+            throw Exception('Conexão interrompida ($actualLen de $totalBytes bytes recebidos).');
+          }
 
-      client.close();
-      return apkFile;
-      } catch (e) {
-        debugPrint('Tentativa $attempt falhou para $currentUrl: $e');
-        lastException = e is Exception ? e : Exception(e.toString());
+          if (!skipApkValidationForTesting) {
+            final isValid = await isApkFileValid(
+              partFile,
+              expectedBytes: totalBytes > 0 ? totalBytes : expectedSizeBytes,
+            );
+            if (!isValid) {
+              await partFile.delete().catchError((_) => partFile);
+              throw Exception('Arquivo APK baixado está corrompido ou incompleto.');
+            }
+          }
+
+          if (await apkFile.exists()) {
+            await apkFile.delete().catchError((_) => apkFile);
+          }
+          await partFile.rename(apkFile.path);
+          return apkFile;
+        } catch (e) {
+          if (sink != null) {
+            try {
+              await sink.flush();
+              await sink.close();
+            } catch (_) {}
+          }
+          debugPrint('Tentativa ${attempt + 1}/$maxRetriesPerUrl falhou para $currentUrl: $e');
+          lastException = e is Exception ? e : Exception(e.toString());
+          if (attempt + 1 < maxRetriesPerUrl) {
+            await Future.delayed(retryDelay);
+          }
+        } finally {
+          client.close();
+        }
       }
     }
-    client.close();
+
     throw lastException ?? Exception('Falha ao baixar o arquivo APK em todas as fontes disponíveis.');
   }
 

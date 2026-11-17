@@ -6,6 +6,15 @@ import 'notification_service.dart';
 import 'app_update_service.dart';
 import '../widgets/app_update_dialog.dart';
 
+List<String> _extractFcmNotes(Map<String, dynamic> data, RemoteNotification? notification) {
+  final raw = (data['release_notes'] ?? data['body'] ?? notification?.body)?.toString() ?? '';
+  return raw
+      .split('\n')
+      .map((s) => s.trim())
+      .where((s) => s.isNotEmpty)
+      .toList();
+}
+
 /// Handler executado em background quando uma mensagem Push do Firebase chega
 /// com o aplicativo completamente fechado ou em segundo plano.
 @pragma('vm:entry-point')
@@ -27,6 +36,7 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
     final version = (data['version'] ?? AppUpdateService.currentAppVersion).toString();
     final buildNumber = int.tryParse(data['build_number']?.toString() ?? '') ??
         AppUpdateService.currentBuildNumber + 1;
+    final notes = _extractFcmNotes(data, notification);
 
     // Se o usuário dispensou esta versão ou build, não exibe notificação
     if (await AppUpdateService.instance.isBuildDismissed(buildNumber, version: version)) {
@@ -39,6 +49,7 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
       version: version,
       buildNumber: buildNumber,
       title: title.toString(),
+      notes: notes,
     );
   } catch (e) {
     debugPrint('Erro no background handler do FCM: $e');
@@ -101,10 +112,12 @@ class FcmService {
             return;
           }
 
+          final notes = _extractFcmNotes(data, notification);
           NotificationService().showUpdateAvailable(
             version: version,
             buildNumber: buildNumber,
             title: title.toString(),
+            notes: notes,
           );
         });
 
@@ -113,8 +126,14 @@ class FcmService {
           debugPrint('App aberto a partir de uma notificação FCM: ${message.data}');
           final v = message.data['version']?.toString();
           final b = int.tryParse(message.data['build_number']?.toString() ?? '');
+          final notes = _extractFcmNotes(message.data, message.notification);
           Future.delayed(const Duration(milliseconds: 600), () {
-            AppUpdateDialog.openFromNotification(autoStartDownload: true, targetVersion: v, targetBuildNumber: b);
+            AppUpdateDialog.openFromNotification(
+              autoStartDownload: true,
+              targetVersion: v,
+              targetBuildNumber: b,
+              fallbackNotes: notes,
+            );
           });
         });
 
@@ -124,8 +143,14 @@ class FcmService {
             debugPrint('App aberto via getInitialMessage FCM: ${initialMessage.data}');
             final v = initialMessage.data['version']?.toString();
             final b = int.tryParse(initialMessage.data['build_number']?.toString() ?? '');
+            final notes = _extractFcmNotes(initialMessage.data, initialMessage.notification);
             Future.delayed(const Duration(milliseconds: 1000), () {
-              AppUpdateDialog.openFromNotification(autoStartDownload: true, targetVersion: v, targetBuildNumber: b);
+              AppUpdateDialog.openFromNotification(
+                autoStartDownload: true,
+                targetVersion: v,
+                targetBuildNumber: b,
+                fallbackNotes: notes,
+              );
             });
           }
         });

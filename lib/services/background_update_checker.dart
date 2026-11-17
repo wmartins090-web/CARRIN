@@ -32,6 +32,7 @@ void backgroundUpdateCallbackDispatcher() {
               version: info.version,
               buildNumber: info.buildNumber,
               title: '🚀 Nova Atualização do CARRIN (v${info.version})',
+              notes: info.releaseNotes,
             );
             await prefs.setString(prefLastNotifiedUpdateVersionKey, info.version);
           }
