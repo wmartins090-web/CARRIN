@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../models/item.dart';
 import '../providers/item_provider.dart';
 import '../services/receipt_parser.dart';
+import '../services/receipt_item_matcher.dart';
 import '../services/utils.dart';
 import '../services/community_price_service.dart';
 import '../services/sefaz_receipt_service.dart';
@@ -33,11 +34,42 @@ class _ReceiptScannerScreenState extends State<ReceiptScannerScreen> {
   
   bool _isProcessing = false;
   List<Item> _extractedItems = [];
+  final Map<int, int?> _manualCartIndexByReceiptPos = {};
   String? _storeName;
   String? _cnpj;
   String? _nfcKey;
   String? _uf;
   String _statusMessage = 'Tire uma foto, escolha da galeria ou escaneie o QR Code NFC-e.';
+
+  void _removeExtractedAt(int index) {
+    if (index < 0 || index >= _extractedItems.length) return;
+    _extractedItems.removeAt(index);
+    final updatedOverrides = <int, int?>{};
+    _manualCartIndexByReceiptPos.forEach((key, value) {
+      if (key < index) {
+        updatedOverrides[key] = value;
+      } else if (key > index) {
+        updatedOverrides[key - 1] = value;
+      }
+    });
+    _manualCartIndexByReceiptPos
+      ..clear()
+      ..addAll(updatedOverrides);
+  }
+
+  ReceiptItemMatchResult _computeMatchResult(
+    ItemProvider provider,
+    List<Item> compareList,
+  ) {
+    return ReceiptItemMatcher.matchItems(
+      receiptItems: _extractedItems,
+      cartItems: compareList,
+      barcodeNameResolver: (bc) => provider.findProductByBarcode(bc)?['name'] as String?,
+      manualCartIndexByReceiptPos: _manualCartIndexByReceiptPos.isEmpty
+          ? null
+          : _manualCartIndexByReceiptPos,
+    );
+  }
 
   @override
   void initState() {
@@ -74,6 +106,7 @@ class _ReceiptScannerScreenState extends State<ReceiptScannerScreen> {
 
       setState(() {
         _extractedItems = parseResult.items;
+        _manualCartIndexByReceiptPos.clear();
         _storeName = parseResult.storeName ?? _storeName;
         _cnpj = parseResult.cnpj ?? _cnpj;
         _nfcKey = parseResult.nfcKey ?? _nfcKey;
@@ -133,6 +166,7 @@ class _ReceiptScannerScreenState extends State<ReceiptScannerScreen> {
       setState(() {
         _isProcessing = false;
         _extractedItems = sefazResult.items;
+        _manualCartIndexByReceiptPos.clear();
         _storeName = sefazResult.storeName ?? _storeName;
         _cnpj = sefazResult.cnpj ?? _cnpj;
         _nfcKey = sefazResult.nfcKey ?? _nfcKey;
@@ -175,6 +209,7 @@ class _ReceiptScannerScreenState extends State<ReceiptScannerScreen> {
           if (!mounted) return;
           setState(() {
             _extractedItems = webviewResult.items;
+            _manualCartIndexByReceiptPos.clear();
             _storeName = webviewResult.storeName ?? _storeName;
             _cnpj = webviewResult.cnpj ?? _cnpj;
             _nfcKey = webviewResult.nfcKey ?? _nfcKey;
@@ -293,11 +328,22 @@ class _ReceiptScannerScreenState extends State<ReceiptScannerScreen> {
 
   void _editItemDialog(int index) {
     final item = _extractedItems[index];
+    final provider = Provider.of<ItemProvider>(context, listen: false);
+    final cartItems = provider.items.where((it) => it.index != null).toList();
     final nameCtrl = TextEditingController(text: item.name);
     final qtyCtrl = TextEditingController(text: Utils.formatNumber(item.quantity));
     final priceCtrl = TextEditingController(text: Utils.formatCurrencyInput(item.unitPrice));
+    final barcodeCtrl = TextEditingController(text: item.barcode ?? '');
     if (priceCtrl.text.isNotEmpty) priceCtrl.selection = TextSelection.collapsed(offset: priceCtrl.text.length);
     String selectedCategory = item.category;
+
+    int selectedMatchTarget = _manualCartIndexByReceiptPos.containsKey(index)
+        ? (_manualCartIndexByReceiptPos[index] ?? -1)
+        : -2;
+    if (selectedMatchTarget >= 0 &&
+        !cartItems.any((it) => it.index == selectedMatchTarget)) {
+      selectedMatchTarget = -2;
+    }
 
     showDialog(
       context: context,
@@ -335,6 +381,16 @@ class _ReceiptScannerScreenState extends State<ReceiptScannerScreen> {
                   ],
                 ),
                 const SizedBox(height: 12),
+                TextField(
+                  controller: barcodeCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'Código de Barras (EAN)',
+                    hintText: 'Ex: 7891000100103',
+                    prefixIcon: Icon(Icons.qr_code_2),
+                  ),
+                  keyboardType: TextInputType.number,
+                ),
+                const SizedBox(height: 12),
                 DropdownButtonFormField<String>(
                   initialValue: ItemProvider.categories.contains(selectedCategory) ? selectedCategory : 'Outros',
                   decoration: const InputDecoration(labelText: 'Categoria'),
@@ -348,6 +404,36 @@ class _ReceiptScannerScreenState extends State<ReceiptScannerScreen> {
                     }
                   },
                 ),
+                if (cartItems.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<int>(
+                    initialValue: selectedMatchTarget,
+                    isExpanded: true,
+                    decoration: const InputDecoration(labelText: 'Correspondência na Lista'),
+                    items: [
+                      const DropdownMenuItem<int>(
+                        value: -2,
+                        child: Text('🤖 Automático (nome ou EAN)'),
+                      ),
+                      const DropdownMenuItem<int>(
+                        value: -1,
+                        child: Text('➕ Adicionar como novo item'),
+                      ),
+                      ...cartItems.map((it) => DropdownMenuItem<int>(
+                            value: it.index!,
+                            child: Text(
+                              '🔁 Sobrepôr: ${it.name}',
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          )),
+                    ],
+                    onChanged: (val) {
+                      if (val != null) {
+                        setDialogState(() => selectedMatchTarget = val);
+                      }
+                    },
+                  ),
+                ],
               ],
             ),
           ),
@@ -361,15 +447,26 @@ class _ReceiptScannerScreenState extends State<ReceiptScannerScreen> {
                 final newName = nameCtrl.text.trim();
                 final newQty = double.tryParse(qtyCtrl.text.replaceAll(',', '.')) ?? 1.0;
                 final newPrice = Utils.parseCurrency(priceCtrl.text);
+                final cleanBarcode = Item.parseBarcode(barcodeCtrl.text);
 
                 if (newName.isNotEmpty) {
                   setState(() {
-                    _extractedItems[index] = item.copyWith(
+                    _extractedItems[index] = Item(
+                      index: item.index,
                       name: newName,
                       quantity: newQty,
                       unitPrice: newPrice,
+                      isKg: item.isKg,
                       category: selectedCategory,
+                      isBought: item.isBought,
+                      barcode: cleanBarcode,
+                      supermarket: item.supermarket,
                     );
+                    if (selectedMatchTarget == -2) {
+                      _manualCartIndexByReceiptPos.remove(index);
+                    } else {
+                      _manualCartIndexByReceiptPos[index] = selectedMatchTarget;
+                    }
                   });
                 }
                 Navigator.pop(ctx);
@@ -382,32 +479,29 @@ class _ReceiptScannerScreenState extends State<ReceiptScannerScreen> {
     );
   }
 
-  void _saveItems() async {
+  Future<void> _saveItems() async {
     final provider = Provider.of<ItemProvider>(context, listen: false);
-    int addedCount = 0;
-    int updatedCount = 0;
-
-    for (var item in _extractedItems) {
-      final normalized = Utils.normalize(item.name);
-      final existingIndex = provider.items.indexWhere(
-        (it) => Utils.normalize(it.name) == normalized,
-      );
-
-      if (existingIndex != -1) {
-        final existingItem = provider.items[existingIndex];
-        final updated = existingItem.copyWith(
-          unitPrice: item.unitPrice > 0 ? item.unitPrice : existingItem.unitPrice,
-          quantity: item.quantity,
-          isBought: true,
-          category: item.category.isNotEmpty ? item.category : existingItem.category,
+    if (provider.isCurrentMonthFinalized) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Esta lista está finalizada e não pode ser alterada.'),
+            backgroundColor: Colors.orange,
+          ),
         );
-        await provider.updateItem(updated);
-        updatedCount++;
-      } else {
-        await provider.addItem(item);
-        addedCount++;
       }
+      return;
     }
+
+    final mergeResult = await provider.mergeReceiptItems(
+      _extractedItems,
+      storeName: _storeName,
+      manualCartIndexByReceiptPos: _manualCartIndexByReceiptPos.isEmpty
+          ? null
+          : _manualCartIndexByReceiptPos,
+    );
+    final int addedCount = mergeResult.addedCount;
+    final int updatedCount = mergeResult.updatedCount;
 
     // Registra na base da comunidade com selo de Nota Fiscal Verificada
     final marketName = _storeName ?? provider.detectedSupermarket?['name'] ?? CommunityPriceService.defaultStoreName;
@@ -431,16 +525,20 @@ class _ReceiptScannerScreenState extends State<ReceiptScannerScreen> {
         ).catchError((_) => false);
       }
     }
-    
+
+    final String barcodeInfo = mergeResult.preservedBarcodesCount > 0
+        ? ' (${mergeResult.preservedBarcodesCount} EANs preservados)'
+        : '';
+
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
             addedCount > 0 && updatedCount > 0
-                ? '$addedCount novos adicionados e $updatedCount itens da lista atualizados!'
+                ? '$updatedCount itens da lista sobrepostos e $addedCount novos adicionados$barcodeInfo!'
                 : (addedCount > 0
-                    ? '$addedCount novos itens salvos na lista!'
-                    : '$updatedCount itens da lista foram atualizados e marcados como comprados!'),
+                    ? '$addedCount novos itens salvos na lista$barcodeInfo!'
+                    : '$updatedCount itens da lista foram sobrepostos e marcados como comprados$barcodeInfo!'),
           ),
           backgroundColor: Colors.green,
         ),
@@ -451,7 +549,14 @@ class _ReceiptScannerScreenState extends State<ReceiptScannerScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final provider = Provider.of<ItemProvider>(context, listen: false);
+    final provider = Provider.of<ItemProvider>(context);
+    final compareList = (widget.cartItemsToCompare != null &&
+            widget.cartItemsToCompare!.isNotEmpty)
+        ? widget.cartItemsToCompare!
+        : provider.items;
+    final matchResult = _computeMatchResult(provider, compareList);
+    final int matchedUniqueCount = matchResult.receiptToCartIndex.values.toSet().length;
+    final int newItemsCount = _extractedItems.length - matchResult.receiptToCartIndex.length;
 
     return Scaffold(
       appBar: AppBar(
@@ -464,6 +569,7 @@ class _ReceiptScannerScreenState extends State<ReceiptScannerScreen> {
               onPressed: () {
                 setState(() {
                   _extractedItems = [];
+                  _manualCartIndexByReceiptPos.clear();
                   _storeName = null;
                   _cnpj = null;
                   _nfcKey = null;
@@ -644,11 +750,26 @@ class _ReceiptScannerScreenState extends State<ReceiptScannerScreen> {
                       itemBuilder: (context, index) {
                         final item = _extractedItems[index];
                         final subtotal = item.unitPrice * item.quantity;
-                        final normalized = Utils.normalize(item.name);
-                        final alreadyInList = provider.items.any((it) => Utils.normalize(it.name) == normalized);
+                        final matchedCartPos = matchResult.receiptToCartIndex[index];
+                        final Item? cartMatch = (matchedCartPos != null &&
+                                matchedCartPos >= 0 &&
+                                matchedCartPos < compareList.length)
+                            ? compareList[matchedCartPos]
+                            : null;
+                        final matchType = matchResult.matchTypes[index];
+                        final bool alreadyInList = cartMatch != null;
+                        final String? effectiveBarcode =
+                            Item.parseBarcode(item.barcode) ??
+                                Item.parseBarcode(cartMatch?.barcode) ??
+                                provider.findBarcodeForProductName(item.name);
+                        final String unitLabel = item.isKg ? 'kg' : 'x';
+                        final String barcodeSuffix =
+                            (effectiveBarcode != null && effectiveBarcode.isNotEmpty)
+                                ? ' • EAN $effectiveBarcode'
+                                : '';
 
                         return Dismissible(
-                          key: Key('item_${item.name}_$index'),
+                          key: ValueKey('receipt_item_${index}_${item.name}_${item.barcode ?? ''}'),
                           direction: DismissDirection.endToStart,
                           background: Container(
                             color: Colors.red,
@@ -658,7 +779,7 @@ class _ReceiptScannerScreenState extends State<ReceiptScannerScreen> {
                           ),
                           onDismissed: (_) {
                             setState(() {
-                              _extractedItems.removeAt(index);
+                              _removeExtractedAt(index);
                             });
                           },
                           child: ListTile(
@@ -680,11 +801,13 @@ class _ReceiptScannerScreenState extends State<ReceiptScannerScreen> {
                                 const SizedBox(width: 6),
                                 if (alreadyInList) ...[
                                   Builder(builder: (c) {
-                                    final cartMatch = provider.items.firstWhere(
-                                      (it) => Utils.normalize(it.name) == normalized,
-                                    );
                                     final priceDiff = item.unitPrice - cartMatch.unitPrice;
                                     final hasDiff = cartMatch.unitPrice > 0 && priceDiff.abs() > 0.05;
+                                    final bool isSameName =
+                                        Utils.normalize(cartMatch.name) == Utils.normalize(item.name);
+                                    final String badgeLabel = isSameName
+                                        ? 'Na Lista'
+                                        : 'Sobrepõe: ${cartMatch.name}';
 
                                     return Row(
                                       mainAxisSize: MainAxisSize.min,
@@ -695,12 +818,29 @@ class _ReceiptScannerScreenState extends State<ReceiptScannerScreen> {
                                             color: Colors.green.withValues(alpha: 0.12),
                                             borderRadius: BorderRadius.circular(6),
                                           ),
-                                          child: const Row(
+                                          child: Row(
                                             mainAxisSize: MainAxisSize.min,
                                             children: [
-                                              Icon(Icons.check, size: 10, color: Colors.green),
-                                              SizedBox(width: 2),
-                                              Text('Na Lista', style: TextStyle(fontSize: 9, color: Colors.green, fontWeight: FontWeight.bold)),
+                                              Icon(
+                                                matchType == ReceiptMatchType.barcode
+                                                    ? Icons.qr_code_2
+                                                    : Icons.check,
+                                                size: 10,
+                                                color: Colors.green,
+                                              ),
+                                              const SizedBox(width: 2),
+                                              ConstrainedBox(
+                                                constraints: const BoxConstraints(maxWidth: 120),
+                                                child: Text(
+                                                  badgeLabel,
+                                                  overflow: TextOverflow.ellipsis,
+                                                  style: const TextStyle(
+                                                    fontSize: 9,
+                                                    color: Colors.green,
+                                                    fontWeight: FontWeight.bold,
+                                                  ),
+                                                ),
+                                              ),
                                             ],
                                           ),
                                         ),
@@ -745,7 +885,7 @@ class _ReceiptScannerScreenState extends State<ReceiptScannerScreen> {
                               ],
                             ),
                             subtitle: Text(
-                              '${Utils.formatNumber(item.quantity)}x ${Utils.formatCurrency(item.unitPrice)} • ${item.category}',
+                              '${Utils.formatNumber(item.quantity)}$unitLabel ${Utils.formatCurrency(item.unitPrice)} • ${item.category}$barcodeSuffix',
                             ),
                             trailing: Row(
                               mainAxisSize: MainAxisSize.min,
@@ -758,7 +898,7 @@ class _ReceiptScannerScreenState extends State<ReceiptScannerScreen> {
                                   icon: const Icon(Icons.delete_outline, size: 20, color: Colors.grey),
                                   onPressed: () {
                                     setState(() {
-                                      _extractedItems.removeAt(index);
+                                      _removeExtractedAt(index);
                                     });
                                   },
                                 ),
@@ -781,8 +921,10 @@ class _ReceiptScannerScreenState extends State<ReceiptScannerScreen> {
                         onPressed: _saveItems,
                         icon: const Icon(Icons.check_circle_outline),
                         label: Text(
-                          'Salvar ${_extractedItems.length} Itens na Lista',
-                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                          matchedUniqueCount > 0
+                              ? 'Salvar: $matchedUniqueCount sobrepõem, $newItemsCount novos'
+                              : 'Salvar ${_extractedItems.length} Itens na Lista',
+                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
                         ),
                       ),
                     ),

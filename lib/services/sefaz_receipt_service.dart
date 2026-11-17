@@ -204,6 +204,27 @@ class SefazReceiptService {
     final cleanName = _sanitizeProductName(rawName);
     if (cleanName.length < 2) return null;
 
+    // Código de Barras / GTIN / EAN (presente em .RCod ou colunas equivalentes)
+    String? extractedBarcode;
+    final codEl = row.querySelector('.RCod, .fixo-prod-cod, .prod-cod, td.cod, span.cod');
+    if (codEl != null) {
+      extractedBarcode = ReceiptParser.extractValidBarcode(codEl.text);
+    }
+    if (extractedBarcode == null) {
+      final codMatch = RegExp(r'(?:C[oó]digo|Cod\.?|EAN|GTIN)\s*:?\s*(\d{8,14})', caseSensitive: false)
+          .firstMatch(row.text);
+      if (codMatch != null) {
+        extractedBarcode = ReceiptParser.extractValidBarcode(codMatch.group(1));
+      }
+    }
+
+    // Unidade (KG vs UN)
+    bool isKg = false;
+    final unEl = row.querySelector('.RUN, .fixo-prod-un, .prod-un');
+    if (unEl != null) {
+      isKg = RegExp(r'\bkg\b', caseSensitive: false).hasMatch(unEl.text);
+    }
+
     // Quantidade
     double quantity = 1.0;
     final qtdEl = row.querySelector('.Rqtd, .fixo-prod-qtd, .prod-qtd');
@@ -246,8 +267,10 @@ class SefazReceiptService {
       name: formattedName,
       quantity: quantity,
       unitPrice: unitPrice,
+      isKg: isKg,
       category: ItemProvider.suggestCategoryForName(formattedName),
       isBought: true,
+      barcode: extractedBarcode,
       supermarket: storeName,
     );
   }

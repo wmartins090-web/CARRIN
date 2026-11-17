@@ -1,9 +1,11 @@
+import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:vibration/vibration.dart';
-import 'dart:convert';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import 'package:image_picker/image_picker.dart';
+import '../models/item.dart';
 import '../services/shelf_tag_parser.dart';
 import '../widgets/shelf_tag_selection_sheet.dart';
 
@@ -23,6 +25,8 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen>
   late final AnimationController _animController;
   late final Animation<double> _animation;
   bool _found = false;
+  bool _isAnalyzingFrame = false;
+  String? _processingLabel;
 
   @override
   void initState() {
@@ -32,6 +36,7 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen>
       detectionSpeed: DetectionSpeed.normal,
       facing: CameraFacing.back,
       torchEnabled: false,
+      returnImage: true,
       formats: const [
         BarcodeFormat.all,
       ],
@@ -54,21 +59,140 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen>
     super.dispose();
   }
 
-  void _onDetect(BarcodeCapture capture) {
-    if (_found) return;
+  bool _isDirectQrPayload(String code) {
+    final lower = code.toLowerCase();
+    return lower.startsWith('http://') ||
+        lower.startsWith('https://') ||
+        lower.startsWith('carrin://') ||
+        lower.contains('carrin.app/') ||
+        lower.contains('docs.google.com/spreadsheets/') ||
+        lower.contains('sefaz') ||
+        lower.contains('fazenda') ||
+        lower.contains('nfce') ||
+        lower.contains('danfe') ||
+        lower.contains('?p=') ||
+        RegExp(r'^\d{44}$').hasMatch(code) ||
+        (code.startsWith('{') && code.endsWith('}'));
+  }
+
+  Future<void> _onDetect(BarcodeCapture capture) async {
+    if (_found || _isAnalyzingFrame) return;
+    String? code;
     for (final barcode in capture.barcodes) {
-      final code = barcode.rawValue?.trim() ?? barcode.displayValue?.trim();
-      if (code != null && code.isNotEmpty) {
-        setState(() => _found = true);
-        try {
-          Vibration.vibrate(duration: 70);
-        } catch (_) {}
-        if (mounted) {
-          Navigator.pop(context, code);
+      final candidate = barcode.rawValue?.trim() ?? barcode.displayValue?.trim();
+      if (candidate != null && candidate.isNotEmpty) {
+        code = candidate;
+        break;
+      }
+    }
+    if (code == null || code.isEmpty) return;
+
+    setState(() => _found = true);
+    try {
+      Vibration.vibrate(duration: 70);
+    } catch (_) {}
+
+    final frameBytes = capture.image;
+    if (_isDirectQrPayload(code) || frameBytes == null || frameBytes.isEmpty) {
+      if (mounted) {
+        Navigator.pop(context, code);
+      }
+      return;
+    }
+
+    final cleanBarcode = Item.parseBarcode(code) ?? code;
+
+    if (mounted) {
+      setState(() {
+        _isAnalyzingFrame = true;
+        _processingLabel = 'Lendo etiqueta de gôndola...';
+      });
+    }
+
+    ShelfTagResult? frameTagResult;
+    Directory? tempDir;
+    try {
+      tempDir = await Directory.systemTemp.createTemp('carrin_frame_');
+      final tempFile = File('${tempDir.path}/scan.png');
+      await tempFile.writeAsBytes(frameBytes, flush: true);
+      final recognizer = TextRecognizer(script: TextRecognitionScript.latin);
+      try {
+        final recognized = await recognizer.processImage(InputImage.fromFilePath(tempFile.path));
+        final parsed = ShelfTagParser.parse(recognized.text, requirePriceContext: true);
+        if (parsed.hasAnyPrice) {
+          frameTagResult = ShelfTagResult(
+            productName: parsed.productName,
+            barcode: cleanBarcode,
+            retailPrice: parsed.retailPrice,
+            wholesalePrice: parsed.wholesalePrice,
+            allPrices: parsed.allPrices,
+            rawText: parsed.rawText,
+          );
         }
+      } finally {
+        await recognizer.close();
+      }
+    } catch (_) {
+      frameTagResult = null;
+    } finally {
+      try {
+        await tempDir?.delete(recursive: true);
+      } catch (_) {}
+    }
+
+    if (!mounted) return;
+
+    if (frameTagResult != null && frameTagResult.hasAnyPrice) {
+      final resolvedTagResult = frameTagResult;
+      setState(() {
+        _isAnalyzingFrame = false;
+        _processingLabel = null;
+      });
+
+      if (resolvedTagResult.hasMultiplePrices || resolvedTagResult.allPrices.length > 1) {
+        bool selected = false;
+        await ShelfTagSelectionSheet.show(
+          context,
+          tagResult: resolvedTagResult,
+          onPriceSelected: (selectedPrice, prodName, barcode) {
+            selected = true;
+            final payload = jsonEncode({
+              'name': prodName,
+              'barcode': barcode ?? cleanBarcode,
+              'price': selectedPrice.price,
+              'quantity': selectedPrice.minQuantity ?? 1,
+              'isWholesale': selectedPrice.isWholesale,
+              'label': selectedPrice.label,
+              'retailPrice': resolvedTagResult.retailPrice?.price,
+              'wholesalePrice': resolvedTagResult.wholesalePrice?.price,
+              'wholesaleMinQty': resolvedTagResult.wholesalePrice?.minQuantity,
+            });
+            Navigator.pop(context, '__ACTION_SHELF_TAG__:$payload');
+          },
+        );
+        if (!selected && mounted) {
+          setState(() => _found = false);
+        }
+        return;
+      } else {
+        final single = resolvedTagResult.allPrices.first;
+        final payload = jsonEncode({
+          'name': resolvedTagResult.productName,
+          'barcode': cleanBarcode,
+          'price': single.price,
+          'quantity': single.minQuantity ?? 1,
+          'isWholesale': single.isWholesale,
+          'label': single.label,
+          'retailPrice': resolvedTagResult.retailPrice?.price,
+          'wholesalePrice': resolvedTagResult.wholesalePrice?.price,
+          'wholesaleMinQty': resolvedTagResult.wholesalePrice?.minQuantity,
+        });
+        Navigator.pop(context, '__ACTION_SHELF_TAG__:$payload');
         return;
       }
     }
+
+    Navigator.pop(context, code);
   }
 
   void _showManualInputDialog() {
@@ -139,44 +263,87 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen>
       final image = await picker.pickImage(
         source: ImageSource.camera,
         preferredCameraDevice: CameraDevice.rear,
+        imageQuality: 92,
       );
       if (image == null) return;
 
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Row(
-            children: [
-              SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-              ),
-              SizedBox(width: 12),
-              Text('Analisando etiqueta de gôndola...'),
-            ],
-          ),
-          duration: Duration(seconds: 4),
-          backgroundColor: Color(0xFF0F172A),
-        ),
-      );
+      setState(() {
+        _isAnalyzingFrame = true;
+        _processingLabel = 'Analisando etiqueta de gôndola...';
+      });
 
       final recognizer = TextRecognizer(script: TextRecognitionScript.latin);
-      final inputImage = InputImage.fromFilePath(image.path);
-      final recognizedText = await recognizer.processImage(inputImage);
-      await recognizer.close();
+      String ocrText = '';
+      BarcodeCapture? barcodeCapture;
+      try {
+        final results = await Future.wait<dynamic>([
+          recognizer.processImage(InputImage.fromFilePath(image.path)),
+          controller.analyzeImage(image.path).catchError((_) => null),
+        ]);
+        final recognizedText = results[0] as RecognizedText;
+        ocrText = recognizedText.text;
+        barcodeCapture = results[1] as BarcodeCapture?;
+      } finally {
+        await recognizer.close();
+      }
 
-      final result = ShelfTagParser.parse(recognizedText.text);
+      String? imageBarcode;
+      if (barcodeCapture != null) {
+        for (final b in barcodeCapture.barcodes) {
+          final raw = b.rawValue?.trim() ?? b.displayValue?.trim();
+          if (raw != null && raw.isNotEmpty) {
+            imageBarcode = Item.parseBarcode(raw) ?? raw;
+            break;
+          }
+        }
+      }
+
+      final parsed = ShelfTagParser.parse(ocrText);
+      final result = ShelfTagResult(
+        productName: parsed.productName,
+        barcode: imageBarcode ?? parsed.barcode,
+        retailPrice: parsed.retailPrice,
+        wholesalePrice: parsed.wholesalePrice,
+        allPrices: parsed.allPrices,
+        rawText: parsed.rawText,
+      );
 
       if (!mounted) return;
-      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      setState(() {
+        _isAnalyzingFrame = false;
+        _processingLabel = null;
+      });
 
       if (!result.hasAnyPrice) {
+        final bool hasPartialData =
+            (result.barcode != null && result.barcode!.isNotEmpty) ||
+            (result.productName != null && result.productName!.isNotEmpty);
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Nenhum preço nítido encontrado na foto. Aproxime a câmera da etiqueta da gôndola.'),
+          SnackBar(
+            content: Text(
+              hasPartialData
+                  ? 'Preço não identificado, mas li ${result.productName ?? 'código ${result.barcode}'}.'
+                  : 'Nenhum preço nítido encontrado na foto. Aproxime a câmera da etiqueta da gôndola.',
+            ),
             backgroundColor: Colors.orange,
-            duration: Duration(seconds: 4),
+            duration: const Duration(seconds: 5),
+            action: hasPartialData
+                ? SnackBarAction(
+                    label: 'USAR',
+                    textColor: Colors.white,
+                    onPressed: () {
+                      if (!mounted) return;
+                      final payload = jsonEncode({
+                        'name': result.productName,
+                        'barcode': result.barcode,
+                        'price': null,
+                        'quantity': 1,
+                      });
+                      Navigator.pop(context, '__ACTION_SHELF_TAG__:$payload');
+                    },
+                  )
+                : null,
           ),
         );
         return;
@@ -197,11 +364,15 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen>
             'wholesalePrice': result.wholesalePrice?.price,
             'wholesaleMinQty': result.wholesalePrice?.minQuantity,
           });
-          Navigator.pop(context, '__ACTION_SHELF_TAG__:' + payload);
+          Navigator.pop(context, '__ACTION_SHELF_TAG__:$payload');
         },
       );
     } catch (e) {
       if (mounted) {
+        setState(() {
+          _isAnalyzingFrame = false;
+          _processingLabel = null;
+        });
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Erro ao analisar etiqueta: $e'),
@@ -331,7 +502,7 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen>
                       borderRadius: BorderRadius.circular(20),
                     ),
                     child: const Text(
-                      'Aponte para o código de barras ou QR Code de cupom',
+                      'Aponte para o código da gôndola, produto ou cupom',
                       style: TextStyle(
                         color: Colors.white,
                         fontSize: 13,
@@ -423,6 +594,35 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen>
                   ),
                 ),
               ),
+              if (_isAnalyzingFrame)
+                Container(
+                  color: Colors.black.withValues(alpha: 0.55),
+                  child: Center(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF0F172A),
+                        borderRadius: BorderRadius.circular(18),
+                        border: Border.all(color: _emeraldColor.withValues(alpha: 0.6)),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2.4, color: _emeraldColor),
+                          ),
+                          const SizedBox(width: 14),
+                          Text(
+                            _processingLabel ?? 'Analisando etiqueta...',
+                            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
             ],
           );
         },

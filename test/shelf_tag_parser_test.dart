@@ -83,5 +83,82 @@ R$ 4,99 A PARTIR DE 12 UNIDADES
       expect(result.allPrices.length, equals(3));
       expect(result.allPrices.any((p) => p.price == 5.49), isTrue);
     });
+
+    test('ignores store header, per-kg reference prices, validity dates and merges multi-line product name', () {
+      const tagText = r'''
+ATACADAO
+ARROZ BRANCO TIO JOAO TP1
+PACOTE 5KG
+PRECO VAREJO
+R$ 29,90
+PRECO ATACADO A PARTIR DE 3 UNIDADES
+R$ 26,90
+COD: 00041258  7896006711115  PRECO P/ KG: R$ 5,38
+VALIDO DE 10/11 A 20/11/2026
+''';
+      final result = ShelfTagParser.parse(tagText);
+      expect(result.productName, equals('ARROZ BRANCO TIO JOAO TP1 PACOTE 5KG'));
+      expect(result.barcode, equals('7896006711115'));
+      expect(result.retailPrice?.price, equals(29.90));
+      expect(result.wholesalePrice?.price, equals(26.90));
+      expect(result.wholesalePrice?.minQuantity, equals(3));
+      expect(result.allPrices.length, equals(2));
+    });
+
+    test('handles split currency lines, spaced cents and same-line name/barcode/price', () {
+      const tagText = r'''
+7894900011517 REFRIG COCA COLA 1.50L
+R$
+9
+,49
+''';
+      final result = ShelfTagParser.parse(tagText);
+      expect(result.barcode, equals('7894900011517'));
+      expect(result.productName, contains('REFRIG COCA COLA 1.50L'));
+      expect(result.retailPrice?.price, equals(9.49));
+      expect(result.allPrices.length, equals(1));
+
+      const spacedCentsTag = 'CAFE PILAO 500G\nR\$ 18 99';
+      final spaced = ShelfTagParser.parse(spacedCentsTag);
+      expect(spaced.productName, equals('CAFE PILAO 500G'));
+      expect(spaced.retailPrice?.price, equals(18.99));
+    });
+
+    test('requirePriceContext ignores nutrition table numbers on product packaging while accepting real shelf tags', () {
+      const packagingBackText = '''
+INFORMACAO NUTRICIONAL
+PORCAO 150,00g
+VALOR ENERGETICO 120,00 kcal
+GORDURAS 5,50g
+LOTE 12.34
+7891000100103
+''';
+      final pkgRes = ShelfTagParser.parse(packagingBackText, requirePriceContext: true);
+      expect(pkgRes.hasAnyPrice, isFalse);
+
+      const liveShelfFrameText = '''
+LEITE UHT INTEGRAL PIRACANJUBA 1L
+R\$ 5 49
+7898215151784
+''';
+      final shelfRes = ShelfTagParser.parse(liveShelfFrameText, requirePriceContext: true);
+      expect(shelfRes.hasAnyPrice, isTrue);
+      expect(shelfRes.productName, equals('LEITE UHT INTEGRAL PIRACANJUBA 1L'));
+      expect(shelfRes.retailPrice?.price, equals(5.49));
+      expect(shelfRes.barcode, equals('7898215151784'));
+    });
+
+    test('extracts spaced EAN-13 without confusing dates for 8-digit barcodes', () {
+      const tagText = '''
+SABONETE DOVE 90G
+VALIDO 10 11 2026
+R\$ 4,29
+7 891150 012349
+''';
+      final res = ShelfTagParser.parse(tagText);
+      expect(res.barcode, equals('7891150012349'));
+      expect(res.retailPrice?.price, equals(4.29));
+      expect(res.productName, equals('SABONETE DOVE 90G'));
+    });
   });
 }

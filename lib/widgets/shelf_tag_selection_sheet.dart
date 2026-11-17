@@ -103,7 +103,9 @@ class ShelfTagSelectionSheet extends StatelessWidget {
                     Text(
                       tagResult.productName?.trim().isNotEmpty == true
                           ? tagResult.productName!
-                          : 'Produto Identificado',
+                          : (tagResult.barcode != null && tagResult.barcode!.isNotEmpty
+                              ? 'Produto (Cód. ${tagResult.barcode})'
+                              : 'Produto Identificado'),
                       style: TextStyle(
                         fontSize: 17,
                         fontWeight: FontWeight.bold,

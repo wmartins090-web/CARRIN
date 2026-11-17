@@ -36,6 +36,7 @@ import '../widgets/market_and_purpose_widgets.dart';
 import 'barcode_scanner_screen.dart';
 import 'receipt_scanner_screen.dart';
 import '../services/barcode_lookup_service.dart';
+import '../services/receipt_item_matcher.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import 'package:image_picker/image_picker.dart';
 import '../services/shelf_tag_parser.dart';
@@ -1520,29 +1521,52 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> with SingleTick
                     if (result.startsWith('__ACTION_SHELF_TAG__:')) {
                       final payloadStr = result.substring('__ACTION_SHELF_TAG__:'.length);
                       final map = jsonDecode(payloadStr) as Map<String, dynamic>;
-                      final name = map['name'] as String?;
-                      final barcode = map['barcode'] as String?;
+                      final rawName = (map['name'] as String?)?.trim();
+                      final rawBarcode = (map['barcode'] as String?)?.trim();
+                      final cleanBc = (rawBarcode != null && rawBarcode.isNotEmpty)
+                          ? (Item.parseBarcode(rawBarcode) ?? rawBarcode)
+                          : null;
                       final price = (map['price'] as num?)?.toDouble();
                       final quantity = (map['quantity'] as num?)?.toDouble() ?? 1.0;
                       final retailPrice = (map['retailPrice'] as num?)?.toDouble();
                       final wholesalePrice = (map['wholesalePrice'] as num?)?.toDouble();
                       final wholesaleMinQty = map['wholesaleMinQty'] as int?;
 
+                      final cachedInfo = (cleanBc != null && cleanBc.isNotEmpty)
+                          ? BarcodeLookupService.instance.getCachedOrLocal(
+                              cleanBc,
+                              itemProvider: itemProvider,
+                            )
+                          : null;
+                      final String? effectiveName = (rawName != null && rawName.isNotEmpty)
+                          ? rawName
+                          : cachedInfo?.name;
+
                       Item? matchedItem;
-                      if (barcode != null && barcode.isNotEmpty) {
+                      if (cleanBc != null && cleanBc.isNotEmpty) {
                         for (var it in itemProvider.items) {
-                          if (Item.parseBarcode(it.barcode) == barcode) {
+                          if (ReceiptItemMatcher.barcodesMatch(it.barcode, cleanBc)) {
                             matchedItem = it;
                             break;
                           }
                         }
                       }
-                      if (matchedItem == null && name != null && name.isNotEmpty) {
-                        final normName = Utils.normalize(name);
+                      if (matchedItem == null && effectiveName != null && effectiveName.isNotEmpty) {
+                        final normName = Utils.normalize(effectiveName);
                         for (var it in itemProvider.items) {
                           if (Utils.normalize(it.name) == normName) {
                             matchedItem = it;
                             break;
+                          }
+                        }
+                      }
+                      if (matchedItem == null && effectiveName != null && effectiveName.isNotEmpty) {
+                        double bestScore = 0.0;
+                        for (var it in itemProvider.items) {
+                          final score = ReceiptItemMatcher.scoreNameMatch(effectiveName, it.name);
+                          if (score >= 0.78 && score > bestScore) {
+                            bestScore = score;
+                            matchedItem = it;
                           }
                         }
                       }
@@ -1551,13 +1575,17 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> with SingleTick
                       _showEditDialog(
                         context,
                         matchedItem,
-                        scannedBarcode: barcode,
-                        prefilledName: name,
+                        scannedBarcode: cleanBc,
+                        prefilledName: effectiveName,
+                        prefilledCategory: cachedInfo?.category,
                         prefilledPrice: price,
                         prefilledQuantity: quantity,
                         tagRetailPrice: retailPrice,
                         tagWholesalePrice: wholesalePrice,
                         tagWholesaleMinQty: wholesaleMinQty,
+                        lookupOnlineOnOpen: (effectiveName == null || effectiveName.isEmpty) &&
+                            cleanBc != null &&
+                            cleanBc.isNotEmpty,
                       );
                       return;
                     }
@@ -1631,7 +1659,8 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> with SingleTick
                     Item? matchedItem;
                     for (var it in itemProvider.items) {
                       final itBc = Item.parseBarcode(it.barcode);
-                      if (itBc == cleanBarcode || (scaleInfo != null && itBc == searchBc)) {
+                      if (ReceiptItemMatcher.barcodesMatch(it.barcode, cleanBarcode) ||
+                          (scaleInfo != null && itBc == searchBc)) {
                         matchedItem = it;
                         break;
                       }
@@ -1651,13 +1680,24 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> with SingleTick
                       for (var it in itemProvider.items) {
                         if (Utils.normalize(it.name) == prodNormalized) {
                           matchedItem = it;
-                          if (it.barcode == null || it.barcode!.trim().isEmpty) {
-                            final updatedWithBarcode = it.copyWith(barcode: cleanBarcode);
-                            itemProvider.updateItem(updatedWithBarcode);
-                            matchedItem = updatedWithBarcode;
-                          }
                           break;
                         }
+                      }
+                      if (matchedItem == null) {
+                        double bestScore = 0.0;
+                        for (var it in itemProvider.items) {
+                          final score = ReceiptItemMatcher.scoreNameMatch(cachedInfo.name, it.name);
+                          if (score >= 0.78 && score > bestScore) {
+                            bestScore = score;
+                            matchedItem = it;
+                          }
+                        }
+                      }
+                      if (matchedItem != null &&
+                          (matchedItem.barcode == null || matchedItem.barcode!.trim().isEmpty)) {
+                        final updatedWithBarcode = matchedItem.copyWith(barcode: cleanBarcode);
+                        itemProvider.updateItem(updatedWithBarcode);
+                        matchedItem = updatedWithBarcode;
                       }
                     }
 
@@ -2180,10 +2220,7 @@ if (_isMarketLocked)
       onDismissed: (direction) {
         if (direction == DismissDirection.endToStart) {
           final originalPos = itemProvider.items.indexOf(item);
-          final deletedIndex = item.index;
-          if (deletedIndex != null) {
-            itemProvider.removeItem(deletedIndex);
-          }
+          itemProvider.removeItemObject(item);
           _showUndoDeleteSnackBar(context, item, originalPos, itemProvider);
         }
       },
@@ -2779,9 +2816,97 @@ if (_isMarketLocked)
                           if (!context.mounted) return;
                           final result = await Navigator.push<String>(context, MaterialPageRoute(builder: (_) => const BarcodeScannerScreen()));
                           if (result != null) {
-                            if (result == '__ACTION_OPEN_RECEIPT__') {
+                            if (result == '__ACTION_OPEN_NFC__') {
+                              if (!dialogContext.mounted) return;
                               Navigator.pop(dialogContext);
+                              if (!context.mounted) return;
+                              _openPairingSheet(defaultTransmit: false);
+                              return;
+                            }
+                            if (result == '__ACTION_OPEN_RECEIPT__') {
+                              if (!dialogContext.mounted) return;
+                              Navigator.pop(dialogContext);
+                              if (!context.mounted) return;
                               Navigator.push(context, MaterialPageRoute(builder: (_) => const ReceiptScannerScreen()));
+                              return;
+                            }
+                            if (result.startsWith('__ACTION_SHELF_TAG__:')) {
+                              final payloadStr = result.substring('__ACTION_SHELF_TAG__:'.length);
+                              final map = jsonDecode(payloadStr) as Map<String, dynamic>;
+                              final tagName = (map['name'] as String?)?.trim();
+                              final rawTagBc = (map['barcode'] as String?)?.trim();
+                              final cleanTagBc = (rawTagBc != null && rawTagBc.isNotEmpty)
+                                  ? (Item.parseBarcode(rawTagBc) ?? rawTagBc)
+                                  : null;
+                              final tagPrice = (map['price'] as num?)?.toDouble();
+                              final tagQty = (map['quantity'] as num?)?.toDouble();
+                              final tagRetail = (map['retailPrice'] as num?)?.toDouble();
+                              final tagWholesale = (map['wholesalePrice'] as num?)?.toDouble();
+                              final tagWholesaleMin = map['wholesaleMinQty'] as int?;
+
+                              final cached = (cleanTagBc != null && cleanTagBc.isNotEmpty)
+                                  ? BarcodeLookupService.instance.getCachedOrLocal(cleanTagBc, itemProvider: prov)
+                                  : null;
+                              final resolvedName = (tagName != null && tagName.isNotEmpty)
+                                  ? tagName
+                                  : cached?.name;
+
+                              if (!dialogContext.mounted) return;
+                              setState(() {
+                                if (cleanTagBc != null && cleanTagBc.isNotEmpty) {
+                                  currentBarcode = cleanTagBc;
+                                  barcodeController.text = cleanTagBc;
+                                  barcodeController.selection = TextSelection.collapsed(offset: cleanTagBc.length);
+                                }
+                                if (tagPrice != null && tagPrice > 0) {
+                                  final formattedPrice = Utils.formatCurrencyInput(tagPrice);
+                                  priceController.text = formattedPrice;
+                                  priceController.selection = TextSelection.collapsed(offset: formattedPrice.length);
+                                }
+                                if (tagRetail != null && tagRetail > 0) activeRetailPrice = tagRetail;
+                                if (tagWholesale != null && tagWholesale > 0) activeWholesalePrice = tagWholesale;
+                                if (tagWholesaleMin != null && tagWholesaleMin > 1) activeWholesaleMinQty = tagWholesaleMin;
+                                if (tagQty != null && tagQty > 0 && (tagQty > 1 || qtyController.text.trim().isEmpty)) {
+                                  final formattedQty = Utils.formatNumber(tagQty);
+                                  qtyController.text = formattedQty;
+                                  qtyController.selection = TextSelection.collapsed(offset: formattedQty.length);
+                                }
+                                if (resolvedName != null && resolvedName.isNotEmpty) {
+                                  filledFromBarcode = true;
+                                  if (nameController.text.trim().isEmpty) {
+                                    nameController.text = resolvedName;
+                                    nameController.selection = TextSelection.collapsed(offset: resolvedName.length);
+                                    category = cached?.category ?? ItemProvider.suggestCategoryForName(resolvedName);
+                                  }
+                                } else if (cleanTagBc != null && cleanTagBc.isNotEmpty && nameController.text.trim().isEmpty) {
+                                  isLookingUpBarcode = true;
+                                }
+                              });
+
+                              if ((resolvedName == null || resolvedName.isEmpty) &&
+                                  cleanTagBc != null &&
+                                  cleanTagBc.isNotEmpty) {
+                                final onlineInfo = await BarcodeLookupService.instance.lookup(cleanTagBc, itemProvider: prov);
+                                if (!dialogContext.mounted) return;
+                                setState(() {
+                                  isLookingUpBarcode = false;
+                                  if (onlineInfo != null) {
+                                    filledFromBarcode = true;
+                                    if (nameController.text.trim().isEmpty) {
+                                      nameController.text = onlineInfo.name;
+                                      nameController.selection = TextSelection.collapsed(offset: onlineInfo.name.length);
+                                      category = onlineInfo.category;
+                                    }
+                                    if (priceController.text.trim().isEmpty &&
+                                        onlineInfo.lastPrice != null &&
+                                        onlineInfo.lastPrice! > 0) {
+                                      final formatted = Utils.formatCurrencyInput(onlineInfo.lastPrice!);
+                                      priceController.text = formatted;
+                                      priceController.selection = TextSelection.collapsed(offset: formatted.length);
+                                    }
+                                  }
+                                });
+                              }
                               return;
                             }
                             final trimmedResult = result.trim();

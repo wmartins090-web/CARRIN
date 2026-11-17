@@ -51,13 +51,22 @@ class Item {
     );
   }
 
-  /// Parses and normalizes barcodes (removes trailing '.0' and whitespace from sheet formatting).
+  /// Parses and normalizes barcodes (removes trailing '.0', leading quote escapes, and whitespace).
+  /// Rejects corrupted scientific-notation strings produced by spreadsheet auto-formatting.
   static String? parseBarcode(dynamic val) {
     if (val == null) return null;
     String s = val.toString().trim();
-    if (s.isEmpty || s == 'null') return null;
+    if (s.startsWith("'")) {
+      s = s.substring(1).trim();
+    }
+    if (s.isEmpty || s.toLowerCase() == 'null' || s.toLowerCase() == 'sem gtin') {
+      return null;
+    }
     if (s.endsWith('.0')) {
       s = s.substring(0, s.length - 2);
+    }
+    if (RegExp(r'^\d+(?:[.,]\d+)?[eE][+-]?\d+$').hasMatch(s)) {
+      return null;
     }
     return s.isNotEmpty ? s : null;
   }

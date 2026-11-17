@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import '../models/item.dart';
 import '../providers/item_provider.dart';
+import 'receipt_parser.dart';
 
 /// Informações consolidadas de um produto obtidas via código de barras
 class ScannedProductInfo {
@@ -108,11 +109,13 @@ class BarcodeLookupService {
 
   /// Retorna imediatamente se o código de barras já estiver em cache ou no histórico local
   ScannedProductInfo? getCachedOrLocal(String barcode, {ItemProvider? itemProvider}) {
-    final cleanBarcode = Item.parseBarcode(barcode);
-    if (cleanBarcode == null || cleanBarcode.isEmpty) return null;
+    final parsed = Item.parseBarcode(barcode);
+    if (parsed == null || parsed.isEmpty) return null;
+    final cleanBarcode = ReceiptParser.extractValidBarcode(parsed) ?? parsed;
 
     if (itemProvider != null) {
-      final local = itemProvider.findProductByBarcode(cleanBarcode);
+      final local = itemProvider.findProductByBarcode(cleanBarcode) ??
+          (cleanBarcode != parsed ? itemProvider.findProductByBarcode(parsed) : null);
       if (local != null) {
         final name = (local['name'] as String? ?? '').trim();
         if (name.isNotEmpty) {
@@ -124,12 +127,13 @@ class BarcodeLookupService {
             source: 'local',
           );
           _cache[cleanBarcode] = info;
+          _cache[parsed] = info;
           return info;
         }
       }
     }
 
-    return _cache[cleanBarcode];
+    return _cache[cleanBarcode] ?? _cache[parsed];
   }
 
   /// Formata strings em Title Case (primeira letra de cada palavra maiúscula)
@@ -248,8 +252,9 @@ class BarcodeLookupService {
     String barcode, {
     ItemProvider? itemProvider,
   }) async {
-    final cleanBarcode = Item.parseBarcode(barcode);
-    if (cleanBarcode == null || cleanBarcode.isEmpty) return null;
+    final parsed = Item.parseBarcode(barcode);
+    if (parsed == null || parsed.isEmpty) return null;
+    final cleanBarcode = ReceiptParser.extractValidBarcode(parsed) ?? parsed;
 
     // 1. Verifica cache em memória ou histórico local
     final cached = getCachedOrLocal(cleanBarcode, itemProvider: itemProvider);
@@ -273,6 +278,7 @@ class BarcodeLookupService {
 
     if (info != null) {
       _cache[cleanBarcode] = info;
+      _cache[parsed] = info;
       debugPrint('🔍 BarcodeLookup: Produto identificado online -> ${info.name} (${info.category})');
       return info;
     }

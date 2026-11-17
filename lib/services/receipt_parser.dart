@@ -147,6 +147,7 @@ class ReceiptParser {
         // Tentar extrair quantidade e valor unitário se presentes na linha
         double quantity = 1.0;
         double unitPrice = linePrice;
+        bool isKg = false;
 
         final qtyMatch = qtyUnitPriceRegex.firstMatch(line);
         if (qtyMatch != null) {
@@ -160,7 +161,16 @@ class ReceiptParser {
           if (parsedUnit != null && parsedUnit > 0) {
             unitPrice = parsedUnit;
           }
+          isKg = RegExp(r'\bkg\b', caseSensitive: false).hasMatch(qtyMatch.group(0)!);
+        } else {
+          final kgUnitMatch = RegExp(r'\b(\d+(?:[.,]\d+)?)\s*kg\b', caseSensitive: false).firstMatch(line);
+          if (kgUnitMatch != null && !rawName.toLowerCase().contains(kgUnitMatch.group(0)!.toLowerCase())) {
+            isKg = true;
+          }
         }
+
+        // Extrai código de barras antes de limpar os prefixos numéricos
+        final extractedBarcode = extractValidBarcode(rawName) ?? extractValidBarcode(line);
 
         // Limpeza do nome do produto
         final cleanName = _cleanProductName(rawName);
@@ -173,8 +183,10 @@ class ReceiptParser {
             name: formattedName,
             quantity: quantity,
             unitPrice: unitPrice,
+            isKg: isKg,
             category: ItemProvider.suggestCategoryForName(formattedName),
             isBought: true,
+            barcode: extractedBarcode,
           ));
         }
       }
@@ -307,6 +319,37 @@ class ReceiptParser {
     return '${digits.substring(0, 2)}.${digits.substring(2, 5)}.${digits.substring(5, 8)}/${digits.substring(8, 12)}-${digits.substring(12, 14)}';
   }
 
+  /// Extrai um código de barras GTIN/EAN válido (8, 12, 13 ou 14 dígitos) de um texto bruto.
+  static String? extractValidBarcode(String? raw) {
+    if (raw == null || raw.trim().isEmpty) return null;
+    final matches = RegExp(r'(?<!\d)(\d{8}|\d{12,14})(?!\d)').allMatches(raw);
+    for (final m in matches) {
+      final digits = m.group(1)!;
+      if (RegExp(r'^0+$').hasMatch(digits)) continue;
+      // Normaliza GTIN-14 com zero à esquerda para EAN-13 quando válido
+      if (digits.length == 14 && digits.startsWith('0')) {
+        final ean13 = digits.substring(1);
+        if (_isValidEan13CheckDigit(ean13)) {
+          return ean13;
+        }
+      }
+      return digits;
+    }
+    return null;
+  }
+
+  static bool _isValidEan13CheckDigit(String ean13) {
+    if (ean13.length != 13) return false;
+    int sum = 0;
+    for (int i = 0; i < 12; i++) {
+      final d = int.tryParse(ean13[i]);
+      if (d == null) return false;
+      sum += (i % 2 == 0) ? d : d * 3;
+    }
+    final check = (10 - (sum % 10)) % 10;
+    return check == int.tryParse(ean13[12]);
+  }
+
   /// Limpa códigos de barras, prefixos numéricos e lixos do OCR no nome do produto
   static String _cleanProductName(String rawName) {
     var name = rawName;
@@ -314,6 +357,9 @@ class ReceiptParser {
     // Remove códigos numéricos do início (ex: "001 789123456 Sabonete" -> "Sabonete")
     name = name.replaceFirst(RegExp(r'^\d{2,}\s+'), '');
     name = name.replaceFirst(RegExp(r'^\d{2,}\s+'), ''); // repete caso haja item + codigo de barras
+
+    // Remove códigos de barras EAN/GTIN isolados em qualquer posição
+    name = name.replaceAll(RegExp(r'(?<!\d)(\d{8}|\d{12,14})(?!\d)'), ' ');
 
     // Remove padrões como "1 UN X 29,90", "1 UN X", "2 CX * 5,00", "0,5 KG X"
     name = name.replaceAll(

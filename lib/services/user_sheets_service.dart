@@ -509,7 +509,7 @@ class UserSheetsService {
   Future<void> updateBudget(double newBudget) async {
     if (_spreadsheetId == null) await _ensureSpreadsheetExists();
     final api = _sheetsApi;
-    if (api == null) return;
+    if (api == null) throw StateError('Sheets API indisponível (aguardando autenticação)');
 
     try {
       final vr = sheets.ValueRange()..values = [[newBudget]];
@@ -542,7 +542,7 @@ class UserSheetsService {
   Future<void> updateSummary(String title, double total, double balance, {int? totalItems, int? boughtItems, bool? isFinalized, double? budget}) async {
     if (_spreadsheetId == null) await _ensureSpreadsheetExists();
     final api = _sheetsApi;
-    if (api == null) return;
+    if (api == null) throw StateError('Sheets API indisponível (aguardando autenticação)');
 
     final escapedTitle = title.replaceAll("'", "''");
     final formulas = [
@@ -602,10 +602,20 @@ class UserSheetsService {
     }
   }
 
+  /// Formata uma linha de item para envio ao Google Sheets preservando códigos de barra como texto literal.
+  List<dynamic> _itemToSheetRow(Item item) {
+    final row = item.toList();
+    final bc = Item.parseBarcode(item.barcode);
+    if (bc != null && bc.isNotEmpty) {
+      row[6] = "'$bc";
+    }
+    return row;
+  }
+
   Future<void> overwriteAllItems(String monthTitle, List<Item> localItems) async {
     if (_spreadsheetId == null) await _ensureSpreadsheetExists();
     final api = _sheetsApi;
-    if (api == null) return;
+    if (api == null) throw StateError('Sheets API indisponível (aguardando autenticação)');
 
     final escapedTitle = monthTitle.replaceAll("'", "''");
     final formulas = [
@@ -622,7 +632,7 @@ class UserSheetsService {
 
       // Insert new
       if (localItems.isNotEmpty) {
-        final List<List<dynamic>> matrix = localItems.map((item) => item.toList()).toList();
+        final List<List<dynamic>> matrix = localItems.map(_itemToSheetRow).toList();
         final vr = sheets.ValueRange()..values = matrix;
         await api.spreadsheets.values.update(
           vr, _spreadsheetId!, "'$escapedTitle'!B7",
@@ -644,7 +654,7 @@ class UserSheetsService {
           await createNewMonth(monthTitle, false);
           await api.spreadsheets.values.clear(sheets.ClearValuesRequest(), _spreadsheetId!, "'$escapedTitle'!B7:I");
           if (localItems.isNotEmpty) {
-            final List<List<dynamic>> matrix = localItems.map((item) => item.toList()).toList();
+            final List<List<dynamic>> matrix = localItems.map(_itemToSheetRow).toList();
             final vr = sheets.ValueRange()..values = matrix;
             await api.spreadsheets.values.update(
               vr, _spreadsheetId!, "'$escapedTitle'!B7",
@@ -669,7 +679,7 @@ class UserSheetsService {
   Future<void> createNewMonth(String newTitle, bool useTemplate, {double? initialBudget, String? sourceMonth}) async {
     if (_spreadsheetId == null) await _ensureSpreadsheetExists();
     final api = _sheetsApi;
-    if (api == null) return;
+    if (api == null) throw StateError('Sheets API indisponível (aguardando autenticação)');
 
     try {
       // Verify if sheet already exists
@@ -712,6 +722,7 @@ class UserSheetsService {
             List<List<dynamic>> templateItems = [];
             for (var item in sourceItems) {
               if (item.name.trim().isNotEmpty) {
+                final bc = Item.parseBarcode(item.barcode);
                 templateItems.add([
                   item.isKg ? 0.0 : 0,
                   item.name,
@@ -719,7 +730,7 @@ class UserSheetsService {
                   0,
                   item.category.isNotEmpty ? item.category : 'Outros',
                   'FALSE',
-                  Item.parseBarcode(item.barcode) ?? '',
+                  (bc != null && bc.isNotEmpty) ? "'$bc" : '',
                   item.supermarket ?? '',
                 ]);
               }
@@ -843,10 +854,10 @@ class UserSheetsService {
   Future<void> addItem(Item item) async {
     if (_spreadsheetId == null) await _ensureSpreadsheetExists();
     final api = _sheetsApi;
-    if (api == null) return;
+    if (api == null) throw StateError('Sheets API indisponível (aguardando autenticação)');
 
     try {
-      final vr = sheets.ValueRange()..values = [item.toList()];
+      final vr = sheets.ValueRange()..values = [_itemToSheetRow(item)];
       await api.spreadsheets.values.append(
         vr, _spreadsheetId!, "'$_currentSheetTitle'!B7",
         valueInputOption: 'USER_ENTERED'
@@ -860,10 +871,11 @@ class UserSheetsService {
   Future<void> updateItem(Item item) async {
     if (_spreadsheetId == null) await _ensureSpreadsheetExists();
     final api = _sheetsApi;
-    if (api == null || item.index == null) return;
+    if (api == null) throw StateError('Sheets API indisponível (aguardando autenticação)');
+    if (item.index == null) return;
 
     try {
-      final vr = sheets.ValueRange()..values = [item.toList()];
+      final vr = sheets.ValueRange()..values = [_itemToSheetRow(item)];
       await api.spreadsheets.values.update(
         vr, _spreadsheetId!, "'$_currentSheetTitle'!B${item.index}:I${item.index}",
         valueInputOption: 'USER_ENTERED'
@@ -877,7 +889,7 @@ class UserSheetsService {
   Future<void> removeItem(int index) async {
     if (_spreadsheetId == null) await _ensureSpreadsheetExists();
     final api = _sheetsApi;
-    if (api == null) return;
+    if (api == null) throw StateError('Sheets API indisponível (aguardando autenticação)');
 
     try {
       // Sheets API delete row requires the sheet ID (number), not the name.
@@ -909,7 +921,7 @@ class UserSheetsService {
   Future<void> deleteMonth(String title) async {
     if (_spreadsheetId == null) await _ensureSpreadsheetExists();
     final api = _sheetsApi;
-    if (api == null) return;
+    if (api == null) throw StateError('Sheets API indisponível (aguardando autenticação)');
 
     try {
       final ss = await api.spreadsheets.get(_spreadsheetId!);
@@ -948,7 +960,7 @@ class UserSheetsService {
   Future<void> renameMonth(String oldTitle, String newTitle) async {
     if (_spreadsheetId == null) await _ensureSpreadsheetExists();
     final api = _sheetsApi;
-    if (api == null) return;
+    if (api == null) throw StateError('Sheets API indisponível (aguardando autenticação)');
 
     try {
       final ss = await api.spreadsheets.get(_spreadsheetId!);

@@ -14,6 +14,20 @@ import '../services/location_service.dart';
 import '../services/community_price_service.dart';
 import '../services/shared_list_service.dart';
 import '../services/shared_list_sync_service.dart';
+import '../services/receipt_item_matcher.dart';
+
+/// Resultado consolidado da mesclagem de uma nota fiscal na lista ativa.
+class ReceiptMergeResult {
+  final int addedCount;
+  final int updatedCount;
+  final int preservedBarcodesCount;
+
+  const ReceiptMergeResult({
+    required this.addedCount,
+    required this.updatedCount,
+    this.preservedBarcodesCount = 0,
+  });
+}
 
 /// Main state management provider for the application.
 /// 
@@ -228,6 +242,8 @@ class ItemProvider with ChangeNotifier {
 
     await _checkAndMigrateToSqlite();
     await _dbHelper.recoverAndConsolidateUserData();
+    await _loadBarcodeCatalog();
+    await _loadDirtyMonths();
     await loadSyncQueue(force: true);
     await purgeObsoleteSyncOperations();
     
@@ -574,6 +590,10 @@ class ItemProvider with ChangeNotifier {
       _priceHistoryCache.clear();
       _barcodeToHistoryCache.clear();
       _nameToBarcodeCache.clear();
+      _barcodeCatalogCache.clear();
+      _deletedItemKeysCache.clear();
+      _localMutationVersion.clear();
+      _dirtyMonths.clear();
       _badgeInfoCache.clear();
       _items = [];
       _months = [];
@@ -587,6 +607,8 @@ class ItemProvider with ChangeNotifier {
 
       // Auto-recupera e consolida listas antes de ler do SQLite
       await _dbHelper.recoverAndConsolidateUserData();
+      await _loadBarcodeCatalog();
+      await _loadDirtyMonths();
 
       // Carrega as configurações locais da conta atual instantaneamente
       await loadAnimationSettings();
@@ -778,8 +800,9 @@ class ItemProvider with ChangeNotifier {
   }
 
   void _enqueueOperation(String type, String month, Map<String, dynamic> payload) {
-    if (!isSyncEnabled) {
-      // Se a conta atual não sincroniza com o Sheets (offline, deslogado ou workspace não pessoal), não enfileira
+    final bool canEventuallySync = _activeUserEmail != null && !isActiveUserOffline;
+    if (!isSyncEnabled && !canEventuallySync) {
+      // Se a conta atual for offline/convidado, não enfileira para o Google Sheets
       return;
     }
     if (type == 'delete_month') {
@@ -789,6 +812,7 @@ class ItemProvider with ChangeNotifier {
 
     if (type == 'sync_items') {
       _syncQueue.removeWhere((op) => op.type == 'sync_items' && op.month == month);
+      _markMonthDirty(month);
     }
     
     _syncQueue.add(SyncOperation(
@@ -800,7 +824,9 @@ class ItemProvider with ChangeNotifier {
     _saveSyncQueue();
     _safeNotify();
     
-    processSyncQueue();
+    if (isSyncEnabled) {
+      processSyncQueue();
+    }
   }
 
   Future<void> processSyncQueue() async {
@@ -846,8 +872,10 @@ class ItemProvider with ChangeNotifier {
         
         try {
           if (op.type == 'sync_items') {
-            final List<Item> items = await _dbHelper.getItems(op.month);
+            await _dbWriteChain;
+            final List<Item> items = _itemsCache[op.month] ?? await _dbHelper.getItems(op.month);
             await _service.overwriteAllItems(op.month, items);
+            _clearMonthDirty(op.month);
           } else if (op.type == 'update_budget') {
             final double budgetValue = (op.payload['budget'] as num).toDouble();
             final previousMonth = _service.currentMonthTitle;
@@ -973,6 +1001,11 @@ class ItemProvider with ChangeNotifier {
   /// Reverse index from barcode to history entries for O(1) instant barcode lookup
   final Map<String, List<Map<String, dynamic>>> _barcodeToHistoryCache = {};
   final Map<String, String> _nameToBarcodeCache = {};
+  final Map<String, String> _barcodeCatalogCache = {};
+  final Map<String, int> _localMutationVersion = {};
+  final Map<String, Set<String>> _deletedItemKeysCache = {};
+  final Set<String> _dirtyMonths = {};
+  Future<void> _dbWriteChain = Future.value();
 
   /// Fast memoization cache for item price badges
   final Map<String, Map<String, dynamic>> _badgeInfoCache = {};
@@ -992,6 +1025,192 @@ class ItemProvider with ChangeNotifier {
   @visibleForTesting
   void setMonthsForTesting(List<String> testMonths) {
     _months = List.from(testMonths);
+  }
+
+  @visibleForTesting
+  void setItemsForTesting(List<Item> testItems, {String? month}) {
+    final target = month ?? currentMonth;
+    if (month != null) {
+      _service.setCurrentTitle(month);
+    }
+    _items = [
+      for (int i = 0; i < testItems.length; i++)
+        testItems[i].index != null ? testItems[i] : testItems[i].copyWith(index: i + 7),
+    ];
+    _itemsCache[target] = List<Item>.from(_items);
+    _rememberBarcodesFromList(_items);
+  }
+
+  Future<T> _enqueueDbWrite<T>(Future<T> Function() action) {
+    final completer = Completer<T>();
+    _dbWriteChain = _dbWriteChain.then((_) async {
+      try {
+        final result = await action();
+        if (!completer.isCompleted) completer.complete(result);
+      } catch (e, st) {
+        if (!completer.isCompleted) completer.completeError(e, st);
+      }
+    });
+    return completer.future;
+  }
+
+  void _bumpLocalMutation(String month) {
+    _localMutationVersion[month] = (_localMutationVersion[month] ?? 0) + 1;
+  }
+
+  String get _dirtyMonthsPrefsKey => 'dirty_sync_months_$_userPrefsPrefix';
+
+  Future<void> _loadDirtyMonths() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final list = prefs.getStringList(_dirtyMonthsPrefsKey) ?? const <String>[];
+      _dirtyMonths
+        ..clear()
+        ..addAll(list.map((e) => e.trim()).where((e) => e.isNotEmpty));
+    } catch (_) {}
+  }
+
+  void _markMonthDirty(String month) {
+    final clean = month.trim();
+    if (clean.isEmpty) return;
+    if (_dirtyMonths.add(clean)) {
+      SharedPreferences.getInstance().then((prefs) {
+        prefs.setStringList(_dirtyMonthsPrefsKey, _dirtyMonths.toList());
+      }).catchError((_) {});
+    }
+  }
+
+  void _clearMonthDirty(String month) {
+    final clean = month.trim();
+    if (_dirtyMonths.remove(clean)) {
+      SharedPreferences.getInstance().then((prefs) {
+        prefs.setStringList(_dirtyMonthsPrefsKey, _dirtyMonths.toList());
+      }).catchError((_) {});
+    }
+  }
+
+  Future<void> _loadBarcodeCatalog() async {
+    try {
+      final catalog = await _dbHelper.getBarcodeCatalog();
+      if (catalog.isNotEmpty) {
+        _barcodeCatalogCache.addAll(catalog);
+        for (final entry in catalog.entries) {
+          _nameToBarcodeCache[entry.key] = entry.value;
+        }
+      }
+    } catch (e) {
+      debugPrint('Erro ao carregar catálogo de códigos de barra: $e');
+    }
+  }
+
+  void _rememberBarcode(String name, String? barcode) {
+    final cleanBc = Item.parseBarcode(barcode);
+    final norm = Utils.normalize(name);
+    if (norm.isEmpty || cleanBc == null || cleanBc.isEmpty) return;
+    _nameToBarcodeCache[norm] = cleanBc;
+    _barcodeCatalogCache[norm] = cleanBc;
+    _dbHelper.saveBarcodeCatalogEntry(norm, cleanBc).catchError((_) {});
+  }
+
+  void _rememberBarcodesFromList(List<Item> list) {
+    final Map<String, String> batch = {};
+    for (final it in list) {
+      final bc = Item.parseBarcode(it.barcode);
+      final norm = Utils.normalize(it.name);
+      if (norm.isNotEmpty && bc != null && bc.isNotEmpty) {
+        _nameToBarcodeCache[norm] = bc;
+        _barcodeCatalogCache[norm] = bc;
+        batch[norm] = bc;
+      }
+    }
+    if (batch.isNotEmpty) {
+      _dbHelper.saveBarcodeCatalogBatch(batch).catchError((_) {});
+    }
+  }
+
+  Set<String> _computeMissingTombstoneKeys(List<Item> removedItems) {
+    final remainingNames = _items.map((it) => Utils.normalize(it.name)).toSet();
+    final remainingBarcodes = _items
+        .map((it) => Item.parseBarcode(it.barcode))
+        .whereType<String>()
+        .toSet();
+
+    final keys = <String>{};
+    for (final it in removedItems) {
+      final norm = Utils.normalize(it.name);
+      if (norm.isNotEmpty && !remainingNames.contains(norm)) {
+        keys.add(norm);
+      }
+      final bc = Item.parseBarcode(it.barcode);
+      if (bc != null && bc.isNotEmpty && !remainingBarcodes.contains(bc)) {
+        keys.add('bc:$bc');
+      }
+    }
+    return keys;
+  }
+
+  Future<Set<String>> _getDeletedItemKeys(String month) async {
+    final cleanMonth = month.trim().toLowerCase();
+    final memSet = _deletedItemKeysCache.putIfAbsent(cleanMonth, () => <String>{});
+    try {
+      final dbKeys = await _dbHelper.getDeletedItemKeys(month);
+      memSet.addAll(dbKeys);
+    } catch (_) {}
+    return Set<String>.from(memSet);
+  }
+
+  Future<void> _markItemsDeleted(String month, List<Item> removedItems) async {
+    final keys = _computeMissingTombstoneKeys(removedItems);
+    if (keys.isEmpty) return;
+    final cleanMonth = month.trim().toLowerCase();
+    _deletedItemKeysCache.putIfAbsent(cleanMonth, () => <String>{}).addAll(keys);
+    try {
+      await _dbHelper.markItemsDeleted(month, keys);
+    } catch (_) {}
+  }
+
+  Future<void> _clearDeletedItems(String month, List<Item> activeItems) async {
+    if (activeItems.isEmpty) return;
+    final keys = <String>{};
+    for (final it in activeItems) {
+      final norm = Utils.normalize(it.name);
+      if (norm.isNotEmpty) keys.add(norm);
+      final bc = Item.parseBarcode(it.barcode);
+      if (bc != null && bc.isNotEmpty) keys.add('bc:$bc');
+    }
+    if (keys.isEmpty) return;
+    final cleanMonth = month.trim().toLowerCase();
+    _deletedItemKeysCache[cleanMonth]?.removeAll(keys);
+    try {
+      await _dbHelper.clearDeletedItems(month, keys);
+    } catch (_) {}
+  }
+
+  void _prunePriceHistoryForDeletedItems(String month, List<Item> removedItems) {
+    final remainingNames = _items.map((it) => Utils.normalize(it.name)).toSet();
+    final monthLower = month.trim().toLowerCase();
+    bool changed = false;
+
+    for (final it in removedItems) {
+      final norm = Utils.normalize(it.name);
+      if (norm.isEmpty || remainingNames.contains(norm)) continue;
+      final list = _priceHistoryCache[norm];
+      if (list != null) {
+        final origLen = list.length;
+        list.removeWhere((e) => (e['month'] as String? ?? '').trim().toLowerCase() == monthLower);
+        if (list.length != origLen) {
+          changed = true;
+          if (list.isEmpty) {
+            _priceHistoryCache.remove(norm);
+          }
+        }
+      }
+      _invalidateBadgeCacheForItem(it.name);
+    }
+
+    if (changed) {
+      _scheduleSavePriceHistory();
+    }
   }
 
   /// Retorna as listas de carrinhos na ordem de criação decrescente (mais recentes criadas no topo).
@@ -1078,12 +1297,12 @@ class ItemProvider with ChangeNotifier {
 
     // 1. Procura na lista ativa
     for (var it in _items) {
-      if (Item.parseBarcode(it.barcode) == cleanBarcode) {
+      if (ReceiptItemMatcher.barcodesMatch(it.barcode, cleanBarcode)) {
         return {
           'name': it.name,
           'price': it.unitPrice,
           'category': it.category,
-          'barcode': cleanBarcode,
+          'barcode': Item.parseBarcode(it.barcode) ?? cleanBarcode,
           'isKg': it.isKg,
         };
       }
@@ -1092,12 +1311,12 @@ class ItemProvider with ChangeNotifier {
     // 2. Procura em todos os meses em cache (preserva o nome original)
     for (var monthItems in _itemsCache.values) {
       for (var it in monthItems) {
-        if (Item.parseBarcode(it.barcode) == cleanBarcode) {
+        if (ReceiptItemMatcher.barcodesMatch(it.barcode, cleanBarcode)) {
           return {
             'name': it.name,
             'price': it.unitPrice,
             'category': it.category,
-            'barcode': cleanBarcode,
+            'barcode': Item.parseBarcode(it.barcode) ?? cleanBarcode,
             'isKg': it.isKg,
           };
         }
@@ -1116,6 +1335,23 @@ class ItemProvider with ChangeNotifier {
           'category': entry['category'] ?? 'Outros',
           'barcode': cleanBarcode,
         };
+      }
+    }
+
+    // 4. Procura no catálogo persistente de códigos de barras (sobrevive à limpeza/reinício)
+    for (final entry in _barcodeCatalogCache.entries) {
+      if (ReceiptItemMatcher.barcodesMatch(entry.value, cleanBarcode)) {
+        final words = entry.key.split(' ').where((w) => w.isNotEmpty).map((w) {
+          return w[0].toUpperCase() + w.substring(1);
+        }).join(' ');
+        if (words.isNotEmpty) {
+          return {
+            'name': words,
+            'price': 0.0,
+            'category': suggestCategoryForName(words),
+            'barcode': cleanBarcode,
+          };
+        }
       }
     }
     return null;
@@ -1140,7 +1376,14 @@ class ItemProvider with ChangeNotifier {
       }
     }
 
-    // 2. Procura no histórico de preços
+    // 2. Procura no catálogo persistente de códigos de barra
+    final catalogBc = Item.parseBarcode(_barcodeCatalogCache[normalized]);
+    if (catalogBc != null && catalogBc.isNotEmpty) {
+      _nameToBarcodeCache[normalized] = catalogBc;
+      return catalogBc;
+    }
+
+    // 3. Procura no histórico de preços
     if (_priceHistoryCache.containsKey(normalized)) {
       final history = _priceHistoryCache[normalized]!;
       for (var entry in history.reversed) {
@@ -1152,7 +1395,7 @@ class ItemProvider with ChangeNotifier {
       }
     }
 
-    // 3. Procura em todos os meses em cache
+    // 4. Procura em todos os meses em cache
     for (var list in _itemsCache.values) {
       for (var it in list) {
         final b = Item.parseBarcode(it.barcode);
@@ -1182,9 +1425,14 @@ class ItemProvider with ChangeNotifier {
     }
     if (changed) {
       final month = _service.currentMonthTitle;
-      _dbHelper.saveItems(month, _items);
       _itemsCache[month] = List.from(_items);
       if (notify) _safeNotify();
+      _enqueueDbWrite(() async {
+        try {
+          await _dbHelper.saveItems(month, _items);
+          await _dbHelper.saveLocalBackupSnapshot();
+        } catch (_) {}
+      });
     }
   }
 
@@ -1283,9 +1531,7 @@ class ItemProvider with ChangeNotifier {
     }
 
     if (replaceExisting && sharedItems.isNotEmpty) {
-      for (var it in List.from(_items)) {
-        await removeItem(it.index);
-      }
+      await removeMultipleItems(List<Item>.from(_items));
     }
 
     if (newBudget != null && newBudget > 0) {
@@ -1293,8 +1539,22 @@ class ItemProvider with ChangeNotifier {
     }
 
     for (var it in sharedItems) {
-      if (!replaceExisting && _items.any((existing) => Utils.normalize(existing.name) == Utils.normalize(it.name))) {
-        continue;
+      if (!replaceExisting) {
+        final existingIdx = _items.indexWhere((existing) =>
+            Utils.normalize(existing.name) == Utils.normalize(it.name) ||
+            (it.barcode != null &&
+                it.barcode!.isNotEmpty &&
+                ReceiptItemMatcher.barcodesMatch(existing.barcode, it.barcode)));
+        if (existingIdx != -1) {
+          final existing = _items[existingIdx];
+          final incomingBc = Item.parseBarcode(it.barcode);
+          if ((existing.barcode == null || existing.barcode!.trim().isEmpty) &&
+              incomingBc != null &&
+              incomingBc.isNotEmpty) {
+            await updateItem(existing.copyWith(barcode: incomingBc));
+          }
+          continue;
+        }
       }
       await addItem(it);
     }
@@ -1479,33 +1739,44 @@ class ItemProvider with ChangeNotifier {
           barcode: barcode,
         );
         _items.add(newItem);
+        _rememberBarcode(newItem.name, newItem.barcode);
+        await _clearDeletedItems(month, [newItem]);
         changed = true;
       }
     } else if (act == 'remove') {
       final name = d['name'] as String?;
       final barcode = d['barcode'] as String?;
-      final prevLen = _items.length;
+      final removedList = <Item>[];
       _items.removeWhere((it) {
+        bool match = false;
         if (barcode != null && barcode.isNotEmpty && it.barcode != null && it.barcode!.isNotEmpty) {
-          return Item.parseBarcode(it.barcode) == Item.parseBarcode(barcode);
+          match = Item.parseBarcode(it.barcode) == Item.parseBarcode(barcode);
+        } else if (name != null && name.isNotEmpty) {
+          match = Utils.normalize(it.name) == Utils.normalize(name);
         }
-        if (name != null && name.isNotEmpty) {
-          return Utils.normalize(it.name) == Utils.normalize(name);
+        if (match) {
+          removedList.add(it);
         }
-        return false;
+        return match;
       });
-      if (_items.length != prevLen) {
+      if (removedList.isNotEmpty) {
+        await _markItemsDeleted(month, removedList);
+        _prunePriceHistoryForDeletedItems(month, removedList);
         changed = true;
       }
     }
 
     if (changed) {
+      _bumpLocalMutation(month);
+      _itemsCache[month] = List.from(_items);
       _updateLocalMetrics(checkBudget: false);
-      try {
-        await _dbHelper.saveItems(month, _items);
-        _itemsCache[month] = List.from(_items);
-      } catch (_) {}
       _safeNotify();
+      await _enqueueDbWrite(() async {
+        try {
+          await _dbHelper.saveItems(month, _items);
+          await _dbHelper.saveLocalBackupSnapshot();
+        } catch (_) {}
+      });
     }
   }
 
@@ -2010,52 +2281,36 @@ class ItemProvider with ChangeNotifier {
       return;
     }
 
+    final int startMutationVersion = _localMutationVersion[target] ?? 0;
+
     try {
       final freshItems = await _service.getItems(title: target);
-      
-      if (_syncQueue.any((op) => op.month == target)) {
-        debugPrint('Sync de itens descartado para o mês $target: nova operação pendente na fila.');
+
+      if ((_localMutationVersion[target] ?? 0) != startMutationVersion ||
+          _syncQueue.any((op) => op.month == target)) {
+        debugPrint('Sync de itens descartado para o mês $target: alteração local concorrente detectada.');
         return;
       }
 
-      final localCachedItems = await _dbHelper.getItems(target);
+      List<Item> localCachedItems = _itemsCache[target] ?? const [];
+      if (localCachedItems.isEmpty) {
+        try {
+          localCachedItems = await _dbHelper.getItems(target);
+        } catch (_) {}
+      }
 
-      if (freshItems.isEmpty && localCachedItems.isNotEmpty) {
-        debugPrint('Aba na nuvem está vazia para o mês $target, mas local possui ${localCachedItems.length} itens. Sincronizando itens locais para a nuvem.');
-        await _service.overwriteAllItems(target, localCachedItems);
-        _lastItemsSync[target] = DateTime.now();
-        _updateLocalMetrics();
-        _dbHelper.saveLocalBackupSnapshot();
-      } else {
-        List<Item> mergedItems = freshItems;
-        bool pushedLocalExtras = false;
-        if (localCachedItems.length > freshItems.length) {
-          final cloudNames = freshItems.map((e) => Utils.normalize(e.name)).toSet();
-          final missingFromCloud = localCachedItems.where((loc) => !cloudNames.contains(Utils.normalize(loc.name))).toList();
-          if (missingFromCloud.isNotEmpty) {
-            mergedItems = [...freshItems, ...missingFromCloud];
-            for (int i = 0; i < mergedItems.length; i++) {
-              mergedItems[i] = mergedItems[i].copyWith(index: i + 7);
-            }
-            pushedLocalExtras = true;
-          }
-        }
-        if (target == _service.currentMonthTitle) {
-          _items = mergedItems;
-          _itemsCache[target] = mergedItems;
-          _lastItemsSync[target] = DateTime.now();
-        }
-        await _dbHelper.saveItems(target, mergedItems);
-        _itemsCache[target] = mergedItems;
-        final prefs = await SharedPreferences.getInstance();
-        _updatePriceHistoryWithItemList(mergedItems, target, prefs);
-        _updateLocalMetrics();
-        _dbHelper.saveLocalBackupSnapshot();
-        if (pushedLocalExtras) {
-          _service.overwriteAllItems(target, mergedItems).catchError((e) {
-            debugPrint('Aviso ao sincronizar itens locais mesclados para a nuvem ($target): $e');
-          });
-        }
+      final result = await _reconcileCloudItems(
+        target,
+        freshItems,
+        localCachedItems,
+      );
+
+      if (result.pushedToCloud) {
+        _service.overwriteAllItems(target, result.mergedItems).then((_) {
+          _clearMonthDirty(target);
+        }).catchError((e) {
+          debugPrint('Aviso ao sincronizar itens locais mesclados para a nuvem ($target): $e');
+        });
       }
       _lastSyncError = null;
       _safeNotify();
@@ -2068,6 +2323,114 @@ class ItemProvider with ChangeNotifier {
       _lastSyncError = cleanErr;
       _safeNotify();
     }
+  }
+
+  /// Reconcilia itens vindos da nuvem com o estado local, respeitando tombstones de exclusão
+  /// e preservando códigos de barra locais.
+  Future<({List<Item> mergedItems, bool pushedToCloud})> _reconcileCloudItems(
+    String target,
+    List<Item> freshItems,
+    List<Item> localCachedItems,
+  ) async {
+    final deletedKeys = await _getDeletedItemKeys(target);
+    bool isTombstoned(Item it) {
+      final norm = Utils.normalize(it.name);
+      if (deletedKeys.contains(norm)) return true;
+      final bc = Item.parseBarcode(it.barcode);
+      if (bc != null && deletedKeys.contains('bc:$bc')) return true;
+      return false;
+    }
+
+    final filteredCloud = freshItems.where((it) => !isTombstoned(it)).toList();
+    final bool removedDeletedFromCloud = filteredCloud.length != freshItems.length;
+    final bool isDirtyLocally = _dirtyMonths.contains(target);
+
+    if (filteredCloud.isEmpty && localCachedItems.isNotEmpty && (isDirtyLocally || !removedDeletedFromCloud)) {
+      if (isDirtyLocally || deletedKeys.isEmpty) {
+        debugPrint('Aba na nuvem está vazia para o mês $target, mas local possui ${localCachedItems.length} itens. Sincronizando itens locais para a nuvem.');
+        _lastItemsSync[target] = DateTime.now();
+        _updateLocalMetrics();
+        await _enqueueDbWrite(() => _dbHelper.saveLocalBackupSnapshot());
+        return (mergedItems: localCachedItems, pushedToCloud: true);
+      }
+    }
+
+    final Map<String, Item> localByName = {};
+    final Map<String, Item> localByBarcode = {};
+    for (final loc in localCachedItems) {
+      localByName[Utils.normalize(loc.name)] = loc;
+      final bc = Item.parseBarcode(loc.barcode);
+      if (bc != null && bc.isNotEmpty) {
+        localByBarcode[bc] = loc;
+      }
+    }
+
+    // Preserva códigos de barra e mercado caso o Sheets tenha retornado vazio ou formatado
+    List<Item> mergedItems = filteredCloud.map((cloudItem) {
+      final cloudBc = Item.parseBarcode(cloudItem.barcode);
+      final norm = Utils.normalize(cloudItem.name);
+      final localMatch = localByName[norm] ?? (cloudBc != null ? localByBarcode[cloudBc] : null);
+      final preservedBc = cloudBc ??
+          Item.parseBarcode(localMatch?.barcode) ??
+          findBarcodeForProductName(cloudItem.name);
+      final preservedMarket = (cloudItem.supermarket != null && cloudItem.supermarket!.trim().isNotEmpty)
+          ? cloudItem.supermarket
+          : localMatch?.supermarket;
+
+      return cloudItem.copyWith(
+        barcode: preservedBc,
+        supermarket: preservedMarket,
+      );
+    }).toList();
+
+    bool needsCloudPush = removedDeletedFromCloud;
+    if (isDirtyLocally && localCachedItems.isNotEmpty) {
+      final cloudNames = mergedItems.map((e) => Utils.normalize(e.name)).toSet();
+      final missingFromCloud = localCachedItems
+          .where((loc) => !isTombstoned(loc) && !cloudNames.contains(Utils.normalize(loc.name)))
+          .toList();
+      if (missingFromCloud.isNotEmpty) {
+        mergedItems = [...mergedItems, ...missingFromCloud];
+        needsCloudPush = true;
+      }
+    }
+
+    for (int i = 0; i < mergedItems.length; i++) {
+      mergedItems[i] = mergedItems[i].copyWith(index: i + 7);
+    }
+
+    _rememberBarcodesFromList(mergedItems);
+
+    if (target == _service.currentMonthTitle) {
+      _items = mergedItems;
+      _itemsCache[target] = mergedItems;
+      _lastItemsSync[target] = DateTime.now();
+    } else {
+      _itemsCache[target] = mergedItems;
+    }
+
+    await _enqueueDbWrite(() async {
+      try {
+        await _dbHelper.saveItems(target, mergedItems);
+        await _dbHelper.saveLocalBackupSnapshot();
+      } catch (_) {}
+    });
+
+    final prefs = await SharedPreferences.getInstance();
+    _updatePriceHistoryWithItemList(mergedItems, target, prefs);
+    _updateLocalMetrics();
+
+    return (mergedItems: mergedItems, pushedToCloud: needsCloudPush);
+  }
+
+  @visibleForTesting
+  Future<List<Item>> reconcileCloudItemsForTesting(
+    String target,
+    List<Item> freshItems,
+    List<Item> localCachedItems,
+  ) async {
+    final res = await _reconcileCloudItems(target, freshItems, localCachedItems);
+    return res.mergedItems;
   }
 
   Future<void> _pushMissingLocalMonthToCloud(String monthTitle) async {
@@ -2472,7 +2835,11 @@ class ItemProvider with ChangeNotifier {
     _syncQueue.removeWhere((op) => op.month == title);
     await _saveSyncQueue();
 
-    if (_months.contains(title)) {
+      _deletedItemKeysCache.remove(title.trim().toLowerCase());
+      _clearMonthDirty(title);
+      _localMutationVersion.remove(title);
+
+      if (_months.contains(title)) {
       _months.remove(title);
       
       try {
@@ -2554,9 +2921,8 @@ class ItemProvider with ChangeNotifier {
       return;
     }
     
-    final String? effectiveBarcode = (item.barcode != null && item.barcode!.trim().isNotEmpty)
-        ? item.barcode!.trim()
-        : findBarcodeForProductName(item.name);
+    final String? effectiveBarcode = Item.parseBarcode(item.barcode) ??
+        findBarcodeForProductName(item.name);
     
     final String? effectiveSupermarket = (item.supermarket != null && item.supermarket!.trim().isNotEmpty)
         ? item.supermarket!.trim()
@@ -2576,18 +2942,24 @@ class ItemProvider with ChangeNotifier {
     );
     
     _items.add(newItem);
+    _bumpLocalMutation(month);
+    _itemsCache[month] = List.from(_items);
+    _rememberBarcode(newItem.name, effectiveBarcode);
     _updateLocalMetrics(triggerItem: newItem, checkBudget: true);
+    _safeNotify();
     
     final prefs = await SharedPreferences.getInstance();
     _addOrUpdatePriceHistoryCache(newItem, month, prefs);
     
-    try {
-      await _dbHelper.saveItems(month, _items);
-      _itemsCache[month] = List.from(_items);
-      _dbHelper.saveLocalBackupSnapshot();
-    } catch (e) {
-      debugPrint('Erro ao salvar item adicionado no SQLite: $e');
-    }
+    await _clearDeletedItems(month, [newItem]);
+    await _enqueueDbWrite(() async {
+      try {
+        await _dbHelper.saveItems(month, _items);
+        await _dbHelper.saveLocalBackupSnapshot();
+      } catch (e) {
+        debugPrint('Erro ao salvar item adicionado no SQLite: $e');
+      }
+    });
 
     // Compartilha obrigatoriamente e de forma automática na base da comunidade
     if (newItem.unitPrice > 0) {
@@ -2612,8 +2984,6 @@ class ItemProvider with ChangeNotifier {
         createdAt: DatabaseHelper.parseDateFromMonthTitle(month),
       ).catchError((_) => false);
     }
-    
-    _safeNotify();
     
     // Notifica outros dispositivos sincronizados via peer-sync em tempo real
     getSyncIdForMonth(month).then((sid) {
@@ -2644,32 +3014,44 @@ class ItemProvider with ChangeNotifier {
       debugPrint('Erro: Tentativa de atualizar item em um mês finalizado.');
       return;
     }
-    final idx = _items.indexWhere((it) => it.index == item.index);
+    int idx = item.index != null ? _items.indexWhere((it) => it.index == item.index) : -1;
+    if (idx == -1 && item.index == null) {
+      final norm = Utils.normalize(item.name);
+      idx = _items.indexWhere((it) => Utils.normalize(it.name) == norm);
+    }
     if (idx != -1) {
-      final String? effectiveBarcode = (item.barcode != null && item.barcode!.trim().isNotEmpty)
-          ? item.barcode!.trim()
-          : findBarcodeForProductName(item.name);
+      final existingItem = _items[idx];
+      final String? effectiveBarcode = Item.parseBarcode(item.barcode) ??
+          Item.parseBarcode(existingItem.barcode) ??
+          findBarcodeForProductName(item.name);
       final String? effectiveSupermarket = (item.supermarket != null && item.supermarket!.trim().isNotEmpty)
           ? item.supermarket!.trim()
-          : (_selectedSupermarketFilter ?? _detectedSupermarket?['name']);
+          : (existingItem.supermarket ?? _selectedSupermarketFilter ?? _detectedSupermarket?['name']);
       final updatedItem = item.copyWith(
+        index: existingItem.index ?? item.index,
         barcode: effectiveBarcode,
         supermarket: effectiveSupermarket,
       );
 
       _items[idx] = updatedItem;
+      _bumpLocalMutation(month);
+      _itemsCache[month] = List.from(_items);
+      _rememberBarcode(updatedItem.name, effectiveBarcode);
       _updateLocalMetrics(triggerItem: updatedItem, checkBudget: true);
+      _safeNotify();
       
       final prefs = await SharedPreferences.getInstance();
       _addOrUpdatePriceHistoryCache(updatedItem, month, prefs);
       
-      try {
-        await _dbHelper.saveItems(month, _items);
-        _itemsCache[month] = List.from(_items);
-        _dbHelper.saveLocalBackupSnapshot();
-      } catch (e) {
-        debugPrint('Erro ao atualizar item no SQLite: $e');
-      }
+      await _clearDeletedItems(month, [updatedItem]);
+      await _enqueueDbWrite(() async {
+        try {
+          await _dbHelper.saveItems(month, _items);
+          await _dbHelper.saveLocalBackupSnapshot();
+        } catch (e) {
+          debugPrint('Erro ao atualizar item no SQLite: $e');
+        }
+      });
 
       // Compartilha obrigatoriamente e de forma automática na base da comunidade
       if (updatedItem.unitPrice > 0) {
@@ -2695,8 +3077,6 @@ class ItemProvider with ChangeNotifier {
         ).catchError((_) => false);
       }
       
-      _safeNotify();
-      
       // Notifica outros dispositivos sincronizados via peer-sync em tempo real
       getSyncIdForMonth(month).then((sid) {
         if (sid != null && sid.isNotEmpty) {
@@ -2720,6 +3100,222 @@ class ItemProvider with ChangeNotifier {
     }
   }
 
+  /// Mescla itens escaneados de uma nota fiscal (NFC-e / OCR) na lista ativa de forma atômica:
+  /// - Sobrepõe itens equivalentes (por código de barras, nome exato ou correspondência inteligente)
+  /// - Preserva e enriquece os códigos de barras dos itens
+  /// - Acrescenta apenas os itens que faltam na lista
+  Future<ReceiptMergeResult> mergeReceiptItems(
+    List<Item> receiptItems, {
+    String? storeName,
+    Map<int, int?>? manualCartIndexByReceiptPos,
+  }) async {
+    await initialization;
+    final month = _service.currentMonthTitle;
+    if (isMonthFinalized(month) || receiptItems.isEmpty) {
+      return const ReceiptMergeResult(addedCount: 0, updatedCount: 0);
+    }
+
+    final matchResult = ReceiptItemMatcher.matchItems(
+      receiptItems: receiptItems,
+      cartItems: _items,
+      barcodeNameResolver: (bc) => findProductByBarcode(bc)?['name'] as String?,
+      manualCartIndexByReceiptPos: manualCartIndexByReceiptPos,
+    );
+
+    final String? cleanStore = (storeName != null && storeName.trim().isNotEmpty)
+        ? storeName.trim()
+        : (_selectedSupermarketFilter ?? _detectedSupermarket?['name']);
+
+    int updatedCount = 0;
+    int addedCount = 0;
+    int preservedBarcodesCount = 0;
+    final Set<int> updatedCartPositions = {};
+    final List<Item> touchedItems = [];
+    final List<Item> newlyAddedUnmatched = [];
+    final List<Item> updatedItemsForPeerSync = [];
+    final List<Item> addedItemsForPeerSync = [];
+
+    for (int rIdx = 0; rIdx < receiptItems.length; rIdx++) {
+      final rItem = receiptItems[rIdx];
+      final cartPos = matchResult.receiptToCartIndex[rIdx];
+      final String? resolvedStore = (rItem.supermarket != null && rItem.supermarket!.trim().isNotEmpty)
+          ? rItem.supermarket!.trim()
+          : cleanStore;
+
+      if (cartPos != null && cartPos >= 0 && cartPos < _items.length) {
+        final existing = _items[cartPos];
+        final bool isAdditionalLine =
+            matchResult.additionalLineReceiptIndexes.contains(rIdx) ||
+            updatedCartPositions.contains(cartPos);
+
+        final String? existingBc = Item.parseBarcode(existing.barcode);
+        final String? receiptBc = Item.parseBarcode(rItem.barcode);
+        final String? effectiveBc = existingBc ??
+            receiptBc ??
+            findBarcodeForProductName(existing.name) ??
+            findBarcodeForProductName(rItem.name);
+
+        if (effectiveBc != null && effectiveBc.isNotEmpty) {
+          preservedBarcodesCount++;
+        }
+
+        final double mergedQty = isAdditionalLine
+            ? (existing.quantity + (rItem.quantity > 0 ? rItem.quantity : 1.0))
+            : (rItem.quantity > 0 ? rItem.quantity : existing.quantity);
+
+        final double mergedPrice = rItem.unitPrice > 0 ? rItem.unitPrice : existing.unitPrice;
+        final String mergedCategory = (existing.category.isNotEmpty && existing.category != 'Outros')
+            ? existing.category
+            : (rItem.category.isNotEmpty ? rItem.category : 'Outros');
+
+        final updated = existing.copyWith(
+          quantity: mergedQty,
+          unitPrice: mergedPrice,
+          isBought: true,
+          isKg: existing.isKg || rItem.isKg,
+          category: mergedCategory,
+          barcode: effectiveBc,
+          supermarket: resolvedStore ?? existing.supermarket,
+        );
+
+        _items[cartPos] = updated;
+        touchedItems.add(updated);
+        updatedItemsForPeerSync.add(updated);
+        if (updatedCartPositions.add(cartPos)) {
+          updatedCount++;
+        }
+      } else {
+        final duplicateIdx = newlyAddedUnmatched.indexWhere(
+          (pending) => ReceiptItemMatcher.areSameReceiptProduct(pending, rItem),
+        );
+        if (duplicateIdx != -1) {
+          final prev = newlyAddedUnmatched[duplicateIdx];
+          final combinedBc = Item.parseBarcode(prev.barcode) ??
+              Item.parseBarcode(rItem.barcode) ??
+              findBarcodeForProductName(rItem.name);
+          newlyAddedUnmatched[duplicateIdx] = prev.copyWith(
+            quantity: prev.quantity + (rItem.quantity > 0 ? rItem.quantity : 1.0),
+            unitPrice: rItem.unitPrice > 0 ? rItem.unitPrice : prev.unitPrice,
+            isKg: prev.isKg || rItem.isKg,
+            barcode: combinedBc,
+            supermarket: resolvedStore ?? prev.supermarket,
+          );
+        } else {
+          final effectiveBc = Item.parseBarcode(rItem.barcode) ?? findBarcodeForProductName(rItem.name);
+          if (effectiveBc != null && effectiveBc.isNotEmpty) {
+            preservedBarcodesCount++;
+          }
+          newlyAddedUnmatched.add(Item(
+            name: rItem.name,
+            quantity: rItem.quantity > 0 ? rItem.quantity : 1.0,
+            unitPrice: rItem.unitPrice,
+            isKg: rItem.isKg,
+            category: rItem.category.isNotEmpty ? rItem.category : suggestCategoryForName(rItem.name),
+            isBought: true,
+            barcode: effectiveBc,
+            supermarket: resolvedStore,
+          ));
+        }
+      }
+    }
+
+    if (newlyAddedUnmatched.isNotEmpty) {
+      _items.addAll(newlyAddedUnmatched);
+      addedCount = newlyAddedUnmatched.length;
+      touchedItems.addAll(newlyAddedUnmatched);
+      addedItemsForPeerSync.addAll(newlyAddedUnmatched);
+    }
+
+    for (int i = 0; i < _items.length; i++) {
+      _items[i] = _items[i].copyWith(index: i + 7);
+    }
+
+    _bumpLocalMutation(month);
+    _itemsCache[month] = List.from(_items);
+    _rememberBarcodesFromList(touchedItems);
+    _updateLocalMetrics(checkBudget: true);
+
+    final prefs = await SharedPreferences.getInstance();
+    _updatePriceHistoryWithItemList(_items, month, prefs);
+    _safeNotify();
+
+    await _clearDeletedItems(month, touchedItems);
+    await _enqueueDbWrite(() async {
+      try {
+        await _dbHelper.saveItems(month, _items);
+        await _dbHelper.saveLocalBackupSnapshot();
+      } catch (e) {
+        debugPrint('Erro ao salvar mesclagem de nota fiscal no SQLite: $e');
+      }
+    });
+
+    getSyncIdForMonth(month).then((sid) {
+      if (sid != null && sid.isNotEmpty) {
+        for (final it in updatedItemsForPeerSync) {
+          SharedListSyncService.instance.publishAction(
+            syncId: sid,
+            action: 'update',
+            data: {
+              'name': it.name,
+              'barcode': it.barcode,
+              'quantity': it.quantity,
+              'unitPrice': it.unitPrice,
+              'category': it.category,
+              'isKg': it.isKg,
+              'isBought': it.isBought,
+            },
+          );
+        }
+        for (final it in addedItemsForPeerSync) {
+          SharedListSyncService.instance.publishAction(
+            syncId: sid,
+            action: 'add',
+            data: {
+              'name': it.name,
+              'quantity': it.quantity,
+              'unitPrice': it.unitPrice,
+              'category': it.category,
+              'isKg': it.isKg,
+              'isBought': it.isBought,
+              'barcode': it.barcode,
+            },
+          );
+        }
+      }
+    });
+
+    _enqueueOperation('sync_items', month, {});
+    return ReceiptMergeResult(
+      addedCount: addedCount,
+      updatedCount: updatedCount,
+      preservedBarcodesCount: preservedBarcodesCount,
+    );
+  }
+
+  Future<void> removeItemObject(Item targetItem) async {
+    await initialization;
+    final month = _service.currentMonthTitle;
+    if (isMonthFinalized(month)) {
+      debugPrint('Erro: Tentativa de remover item de um mês finalizado.');
+      return;
+    }
+
+    int targetPos = _items.indexWhere((it) => identical(it, targetItem));
+    if (targetPos == -1 && targetItem.index != null) {
+      final normTarget = Utils.normalize(targetItem.name);
+      targetPos = _items.indexWhere(
+        (it) => it.index == targetItem.index && Utils.normalize(it.name) == normTarget,
+      );
+    }
+    if (targetPos == -1) {
+      final normTarget = Utils.normalize(targetItem.name);
+      targetPos = _items.indexWhere((it) => Utils.normalize(it.name) == normTarget);
+    }
+    if (targetPos == -1) return;
+
+    await _removeItemsAtPositions(month, [targetPos]);
+  }
+
   Future<void> removeItem(int index) async {
     await initialization;
     final month = _service.currentMonthTitle;
@@ -2727,57 +3323,61 @@ class ItemProvider with ChangeNotifier {
       debugPrint('Erro: Tentativa de remover item de um mês finalizado.');
       return;
     }
-    Item? removed;
-    for (var it in _items) {
-      if (it.index == index) {
-        removed = it;
-        break;
+    final targetPos = _items.indexWhere((it) => it.index == index);
+    if (targetPos == -1) return;
+
+    await _removeItemsAtPositions(month, [targetPos]);
+  }
+
+  Future<void> _removeItemsAtPositions(String month, List<int> positions) async {
+    final posSet = positions.toSet();
+    final removedList = <Item>[];
+    for (int i = 0; i < _items.length; i++) {
+      if (posSet.contains(i)) {
+        removedList.add(_items[i]);
       }
     }
-    _items.removeWhere((it) => it.index == index);
-    
+    if (removedList.isEmpty) return;
+
+    _items = [
+      for (int i = 0; i < _items.length; i++)
+        if (!posSet.contains(i)) _items[i],
+    ];
+
     for (var i = 0; i < _items.length; i++) {
-      _items[i] = Item(
-        index: i + 7,
-        name: _items[i].name,
-        quantity: _items[i].quantity,
-        unitPrice: _items[i].unitPrice,
-        isKg: _items[i].isKg,
-        category: _items[i].category,
-        isBought: _items[i].isBought,
-        barcode: _items[i].barcode,
-        supermarket: _items[i].supermarket,
-      );
+      _items[i] = _items[i].copyWith(index: i + 7);
     }
-    
+
+    _bumpLocalMutation(month);
+    _itemsCache[month] = List.from(_items);
     _updateLocalMetrics(checkBudget: true);
-    
-    try {
-      await _dbHelper.saveItems(month, _items);
-      _itemsCache[month] = List.from(_items);
-      _dbHelper.saveLocalBackupSnapshot();
-    } catch (e) {
-      debugPrint('Erro ao remover item no SQLite: $e');
-    }
-    
+    _prunePriceHistoryForDeletedItems(month, removedList);
     _safeNotify();
-    
-    // Notifica outros dispositivos sincronizados via peer-sync em tempo real
-    final removedItem = removed;
-    if (removedItem != null) {
-      getSyncIdForMonth(month).then((sid) {
-        if (sid != null && sid.isNotEmpty) {
+
+    await _markItemsDeleted(month, removedList);
+    await _enqueueDbWrite(() async {
+      try {
+        await _dbHelper.saveItems(month, _items);
+        await _dbHelper.saveLocalBackupSnapshot();
+      } catch (e) {
+        debugPrint('Erro ao remover item(ns) no SQLite: $e');
+      }
+    });
+
+    getSyncIdForMonth(month).then((sid) {
+      if (sid != null && sid.isNotEmpty) {
+        for (final it in removedList) {
           SharedListSyncService.instance.publishAction(
             syncId: sid,
             action: 'remove',
             data: {
-              'name': removedItem.name,
-              'barcode': removedItem.barcode,
+              'name': it.name,
+              'barcode': it.barcode,
             },
           );
         }
-      });
-    }
+      }
+    });
 
     _enqueueOperation('sync_items', month, {});
   }
@@ -2795,62 +3395,18 @@ class ItemProvider with ChangeNotifier {
     final toRemoveIndexes = itemsToRemove.map((it) => it.index).whereType<int>().toSet();
     final toRemoveNames = itemsToRemove.map((it) => it.name.trim().toLowerCase()).toSet();
 
-    final removedList = <Item>[];
-    _items.removeWhere((it) {
-      final shouldRemove = (it.index != null && toRemoveIndexes.contains(it.index)) ||
-          toRemoveNames.contains(it.name.trim().toLowerCase());
-      if (shouldRemove) {
-        removedList.add(it);
-        return true;
+    final positions = <int>[];
+    for (int i = 0; i < _items.length; i++) {
+      final it = _items[i];
+      final matchesObject = itemsToRemove.any((target) => identical(it, target));
+      final matchesIndex = it.index != null && toRemoveIndexes.contains(it.index);
+      final matchesName = toRemoveNames.contains(it.name.trim().toLowerCase());
+      if (matchesObject || matchesIndex || (toRemoveIndexes.isEmpty && matchesName)) {
+        positions.add(i);
       }
-      return false;
-    });
-
-    for (var i = 0; i < _items.length; i++) {
-      _items[i] = Item(
-        index: i + 7,
-        name: _items[i].name,
-        quantity: _items[i].quantity,
-        unitPrice: _items[i].unitPrice,
-        isKg: _items[i].isKg,
-        category: _items[i].category,
-        isBought: _items[i].isBought,
-        barcode: _items[i].barcode,
-        supermarket: _items[i].supermarket,
-      );
     }
 
-    _updateLocalMetrics(checkBudget: true);
-
-    try {
-      await _dbHelper.saveItems(month, _items);
-      _itemsCache[month] = List.from(_items);
-      _dbHelper.saveLocalBackupSnapshot();
-    } catch (e) {
-      debugPrint('Erro ao remover múltiplos itens no SQLite: $e');
-    }
-
-    _safeNotify();
-
-    // Notifica peer sync para cada item removido
-    if (removedList.isNotEmpty) {
-      getSyncIdForMonth(month).then((sid) {
-        if (sid != null && sid.isNotEmpty) {
-          for (var it in removedList) {
-            SharedListSyncService.instance.publishAction(
-              syncId: sid,
-              action: 'remove',
-              data: {
-                'name': it.name,
-                'barcode': it.barcode,
-              },
-            );
-          }
-        }
-      });
-    }
-
-    _enqueueOperation('sync_items', month, {});
+    await _removeItemsAtPositions(month, positions);
   }
 
   /// Restaura um item previamente excluído (usado pela ação "Desfazer" do swipe lateral)
@@ -2870,30 +3426,27 @@ class ItemProvider with ChangeNotifier {
 
     // Reindexa ordenadamente
     for (var i = 0; i < _items.length; i++) {
-      _items[i] = Item(
-        index: i + 7,
-        name: _items[i].name,
-        quantity: _items[i].quantity,
-        unitPrice: _items[i].unitPrice,
-        isKg: _items[i].isKg,
-        category: _items[i].category,
-        isBought: _items[i].isBought,
-        barcode: _items[i].barcode,
-        supermarket: _items[i].supermarket,
-      );
+      _items[i] = _items[i].copyWith(index: i + 7);
     }
 
+    _bumpLocalMutation(month);
+    _itemsCache[month] = List.from(_items);
+    _rememberBarcode(item.name, item.barcode);
     _updateLocalMetrics(checkBudget: true);
-
-    try {
-      await _dbHelper.saveItems(month, _items);
-      _itemsCache[month] = List.from(_items);
-      _dbHelper.saveLocalBackupSnapshot();
-    } catch (e) {
-      debugPrint('Erro ao restaurar item no SQLite: $e');
-    }
-
     _safeNotify();
+
+    final prefs = await SharedPreferences.getInstance();
+    _addOrUpdatePriceHistoryCache(item, month, prefs);
+
+    await _clearDeletedItems(month, [item]);
+    await _enqueueDbWrite(() async {
+      try {
+        await _dbHelper.saveItems(month, _items);
+        await _dbHelper.saveLocalBackupSnapshot();
+      } catch (e) {
+        debugPrint('Erro ao restaurar item no SQLite: $e');
+      }
+    });
 
     // Notifica peer sync em tempo real
     getSyncIdForMonth(month).then((sid) {
@@ -2932,30 +3485,27 @@ class ItemProvider with ChangeNotifier {
 
     // Reindexa ordenadamente
     for (var i = 0; i < _items.length; i++) {
-      _items[i] = Item(
-        index: i + 7,
-        name: _items[i].name,
-        quantity: _items[i].quantity,
-        unitPrice: _items[i].unitPrice,
-        isKg: _items[i].isKg,
-        category: _items[i].category,
-        isBought: _items[i].isBought,
-        barcode: _items[i].barcode,
-        supermarket: _items[i].supermarket,
-      );
+      _items[i] = _items[i].copyWith(index: i + 7);
     }
 
+    _bumpLocalMutation(month);
+    _itemsCache[month] = List.from(_items);
+    _rememberBarcodesFromList(itemsToRestore);
     _updateLocalMetrics(checkBudget: true);
-
-    try {
-      await _dbHelper.saveItems(month, _items);
-      _itemsCache[month] = List.from(_items);
-      _dbHelper.saveLocalBackupSnapshot();
-    } catch (e) {
-      debugPrint('Erro ao restaurar múltiplos itens no SQLite: $e');
-    }
-
     _safeNotify();
+
+    final prefs = await SharedPreferences.getInstance();
+    _updatePriceHistoryWithItemList(itemsToRestore, month, prefs);
+
+    await _clearDeletedItems(month, itemsToRestore);
+    await _enqueueDbWrite(() async {
+      try {
+        await _dbHelper.saveItems(month, _items);
+        await _dbHelper.saveLocalBackupSnapshot();
+      } catch (e) {
+        debugPrint('Erro ao restaurar múltiplos itens no SQLite: $e');
+      }
+    });
 
     // Notifica peer sync em tempo real
     getSyncIdForMonth(month).then((sid) {
@@ -3006,16 +3556,18 @@ class ItemProvider with ChangeNotifier {
     }
 
     _updateLocalMetrics(checkBudget: true);
-
-    try {
-      await _dbHelper.saveItems(month, _items);
-      _itemsCache[month] = List.from(_items);
-      _dbHelper.saveLocalBackupSnapshot();
-    } catch (e) {
-      debugPrint('Erro ao atualizar status em lote no SQLite: $e');
-    }
-
+    _bumpLocalMutation(month);
+    _itemsCache[month] = List.from(_items);
     _safeNotify();
+
+    await _enqueueDbWrite(() async {
+      try {
+        await _dbHelper.saveItems(month, _items);
+        await _dbHelper.saveLocalBackupSnapshot();
+      } catch (e) {
+        debugPrint('Erro ao atualizar status em lote no SQLite: $e');
+      }
+    });
 
     getSyncIdForMonth(month).then((sid) {
       if (sid != null && sid.isNotEmpty) {
@@ -3072,15 +3624,19 @@ class ItemProvider with ChangeNotifier {
       }
     }
 
-    try {
-      await _dbHelper.saveItems(month, _items);
-      _itemsCache[month] = List.from(_items);
-      _dbHelper.saveLocalBackupSnapshot();
-    } catch (e) {
-      debugPrint('Erro ao atualizar supermercado em lote no SQLite: $e');
-    }
-
+    _bumpLocalMutation(month);
+    _itemsCache[month] = List.from(_items);
     _safeNotify();
+
+    await _enqueueDbWrite(() async {
+      try {
+        await _dbHelper.saveItems(month, _items);
+        await _dbHelper.saveLocalBackupSnapshot();
+      } catch (e) {
+        debugPrint('Erro ao atualizar supermercado em lote no SQLite: $e');
+      }
+    });
+
     _enqueueOperation('sync_items', month, {});
   }
 
@@ -3131,8 +3687,17 @@ class ItemProvider with ChangeNotifier {
     }
 
     // Salva no destino
-    await _dbHelper.saveItems(destinationMonth, destItems);
+    _bumpLocalMutation(destinationMonth);
     _itemsCache[destinationMonth] = List.from(destItems);
+    await _clearDeletedItems(destinationMonth, movedItems);
+    await _enqueueDbWrite(() async {
+      try {
+        await _dbHelper.saveItems(destinationMonth, destItems);
+        await _dbHelper.saveLocalBackupSnapshot();
+      } catch (e) {
+        debugPrint('Erro ao salvar itens movidos no SQLite: $e');
+      }
+    });
     _enqueueOperation('sync_items', destinationMonth, {});
 
     // 3. Remove os itens do mês atual
@@ -3147,22 +3712,24 @@ class ItemProvider with ChangeNotifier {
       return;
     }
     item.isBought = !item.isBought;
+    _bumpLocalMutation(month);
+    _itemsCache[month] = List.from(_items);
     _updateLocalMetrics(triggerItem: item, checkBudget: true);
+    _safeNotify();
     
     final prefs = await SharedPreferences.getInstance();
     if (item.isBought) {
       _addOrUpdatePriceHistoryCache(item, month, prefs);
     }
     
-    try {
-      await _dbHelper.saveItems(month, _items);
-      _itemsCache[month] = List.from(_items);
-      _dbHelper.saveLocalBackupSnapshot();
-    } catch (e) {
-      debugPrint('Erro ao salvar status comprado no SQLite: $e');
-    }
-    
-    _safeNotify();
+    await _enqueueDbWrite(() async {
+      try {
+        await _dbHelper.saveItems(month, _items);
+        await _dbHelper.saveLocalBackupSnapshot();
+      } catch (e) {
+        debugPrint('Erro ao salvar status comprado no SQLite: $e');
+      }
+    });
     
     // Notifica outros dispositivos sincronizados via peer-sync em tempo real
     getSyncIdForMonth(month).then((sid) {
@@ -3687,6 +4254,7 @@ class ItemProvider with ChangeNotifier {
       'settings_default_budget_$_userPrefsPrefix',
       'cache_price_history_v2_$_userPrefsPrefix',
       'dashboard_card_order_$_userPrefsPrefix',
+      _dirtyMonthsPrefsKey,
     ];
     for (var key in keysToRemove) {
       await prefs.remove(key);
@@ -3721,6 +4289,10 @@ class ItemProvider with ChangeNotifier {
     _priceHistoryCache.clear();
     _barcodeToHistoryCache.clear();
     _nameToBarcodeCache.clear();
+    _barcodeCatalogCache.clear();
+    _deletedItemKeysCache.clear();
+    _localMutationVersion.clear();
+    _dirtyMonths.clear();
     _badgeInfoCache.clear();
     _itemsCache.clear();
     _items = [];

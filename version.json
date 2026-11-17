@@ -1,13 +1,13 @@
 ﻿{
-    "version":  "1.3.627",
-    "build_number":  627,
-    "release_date":  "2026-11-05",
-    "title":  "CARRIN v1.3.627",
+    "version":  "1.3.628",
+    "build_number":  628,
+    "release_date":  "2026-11-17",
+    "title":  "CARRIN v1.3.628",
     "release_notes":  [
-                          "Melhorias de UX na lista de compras (preco expandido sem corte, header simplificado, unificacao de nota fiscal) e correcao definitiva na persistencia de exclusao de listas."
+                          "Exclusão persistente de itens, sobreposição inteligente na nota fiscal, preservação de códigos de barras (EAN) e leitura de preço e nome em etiquetas de gôndola."
                       ],
-    "apk_url":  "https://pub-4bdefe4ec784476eae543ebde4bd2f20.r2.dev/carrin_v1.3.627.apk",
-    "size_bytes":  116451318,
+    "apk_url":  "https://pub-4bdefe4ec784476eae543ebde4bd2f20.r2.dev/carrin_v1.3.628.apk",
+    "size_bytes":  116828150,
     "is_active":  true,
     "force_update":  false
 }
