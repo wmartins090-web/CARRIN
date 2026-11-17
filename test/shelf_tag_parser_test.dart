@@ -160,5 +160,36 @@ R\$ 4,29
       expect(res.retailPrice?.price, equals(4.29));
       expect(res.productName, equals('SABONETE DOVE 90G'));
     });
+
+    test('parseOcrLines reconstructs side-by-side large price digits and superscript cents', () {
+      // Simula ML Kit retornando blocos fora de ordem e dígitos grandes separados dos centavos
+      const ocrLines = [
+        ShelfTagOcrLine(text: ',90', left: 260, top: 185, right: 330, bottom: 225),
+        ShelfTagOcrLine(text: '7896006711115', left: 40, top: 320, right: 260, bottom: 342),
+        ShelfTagOcrLine(text: 'R\$', left: 40, top: 195, right: 85, bottom: 230),
+        ShelfTagOcrLine(text: '29', left: 90, top: 180, right: 255, bottom: 295),
+        ShelfTagOcrLine(text: 'ARROZ TIPO 1 CAMIL 5KG', left: 40, top: 60, right: 420, bottom: 105),
+        ShelfTagOcrLine(text: 'R\$ 5,12', left: 40, top: 360, right: 110, bottom: 374),
+      ];
+
+      final res = ShelfTagParser.parseOcrLines(ocrLines);
+      expect(res.productName, equals('ARROZ TIPO 1 CAMIL 5KG'));
+      expect(res.barcode, equals('7896006711115'));
+      expect(res.retailPrice?.price, equals(29.90));
+      expect(res.allPrices.length, equals(1)); // filtro visual removeu R$ 5,12 minúsculo do rodapé
+    });
+
+    test('parseOcrLines joins integer + superscript cents without comma when price symbol is adjacent', () {
+      const ocrLines = [
+        ShelfTagOcrLine(text: 'CAFE MELITTA 500G', left: 30, top: 40, right: 350, bottom: 80),
+        ShelfTagOcrLine(text: 'R\$', left: 30, top: 140, right: 75, bottom: 175),
+        ShelfTagOcrLine(text: '18', left: 80, top: 130, right: 185, bottom: 230),
+        ShelfTagOcrLine(text: '99', left: 190, top: 135, right: 245, bottom: 175),
+      ];
+
+      final res = ShelfTagParser.parseOcrLines(ocrLines);
+      expect(res.productName, equals('CAFE MELITTA 500G'));
+      expect(res.retailPrice?.price, equals(18.99));
+    });
   });
 }

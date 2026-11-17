@@ -1,13 +1,13 @@
 ﻿{
-    "version":  "1.3.628",
-    "build_number":  628,
+    "version":  "1.3.629",
+    "build_number":  629,
     "release_date":  "2026-11-17",
-    "title":  "CARRIN v1.3.628",
+    "title":  "CARRIN v1.3.629",
     "release_notes":  [
-                          "Exclusão persistente de itens, sobreposição inteligente na nota fiscal, preservação de códigos de barras (EAN) e leitura de preço e nome em etiquetas de gôndola."
+                          "Captura por foto da etiqueta de gôndola com leitura geométrica de nome, preço e código + descarte imediato da foto para não ocupar memória/armazenamento."
                       ],
-    "apk_url":  "https://pub-4bdefe4ec784476eae543ebde4bd2f20.r2.dev/carrin_v1.3.628.apk",
-    "size_bytes":  116828150,
+    "apk_url":  "https://pub-4bdefe4ec784476eae543ebde4bd2f20.r2.dev/carrin_v1.3.629.apk",
+    "size_bytes":  116860942,
     "is_active":  true,
     "force_update":  false
 }

@@ -118,7 +118,10 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen>
       final recognizer = TextRecognizer(script: TextRecognitionScript.latin);
       try {
         final recognized = await recognizer.processImage(InputImage.fromFilePath(tempFile.path));
-        final parsed = ShelfTagParser.parse(recognized.text, requirePriceContext: true);
+        final ocrLines = _extractOcrLines(recognized);
+        final parsed = ocrLines.isNotEmpty
+            ? ShelfTagParser.parseOcrLines(ocrLines, requirePriceContext: true)
+            : ShelfTagParser.parse(recognized.text, requirePriceContext: true);
         if (parsed.hasAnyPrice) {
           frameTagResult = ShelfTagResult(
             productName: parsed.productName,
@@ -257,35 +260,68 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen>
     );
   }
 
+  List<ShelfTagOcrLine> _extractOcrLines(RecognizedText recognized) {
+    final List<ShelfTagOcrLine> lines = [];
+    for (final block in recognized.blocks) {
+      for (final line in block.lines) {
+        final box = line.boundingBox;
+        if (line.text.trim().isEmpty) continue;
+        lines.add(ShelfTagOcrLine(
+          text: line.text,
+          left: box.left,
+          top: box.top,
+          right: box.right,
+          bottom: box.bottom,
+        ));
+      }
+    }
+    return lines;
+  }
+
+  Future<void> _deleteTempFileQuietly(String path) async {
+    try {
+      final file = File(path);
+      if (await file.exists()) {
+        await file.delete();
+      }
+    } catch (_) {}
+  }
+
   Future<void> _scanShelfTag() async {
+    String? capturedPath;
     try {
       final picker = ImagePicker();
       final image = await picker.pickImage(
         source: ImageSource.camera,
         preferredCameraDevice: CameraDevice.rear,
-        imageQuality: 92,
+        maxWidth: 1920,
+        maxHeight: 1920,
+        imageQuality: 88,
       );
       if (image == null) return;
+      capturedPath = image.path;
 
       if (!mounted) return;
       setState(() {
         _isAnalyzingFrame = true;
-        _processingLabel = 'Analisando etiqueta de gôndola...';
+        _processingLabel = 'Lendo nome, preço e código (foto será descartada)...';
       });
 
       final recognizer = TextRecognizer(script: TextRecognitionScript.latin);
-      String ocrText = '';
+      RecognizedText? recognizedText;
       BarcodeCapture? barcodeCapture;
       try {
         final results = await Future.wait<dynamic>([
           recognizer.processImage(InputImage.fromFilePath(image.path)),
           controller.analyzeImage(image.path).catchError((_) => null),
         ]);
-        final recognizedText = results[0] as RecognizedText;
-        ocrText = recognizedText.text;
+        recognizedText = results[0] as RecognizedText;
         barcodeCapture = results[1] as BarcodeCapture?;
       } finally {
         await recognizer.close();
+        // Descarta imediatamente a foto temporária do aparelho após extrair os dados
+        await _deleteTempFileQuietly(capturedPath);
+        capturedPath = null;
       }
 
       String? imageBarcode;
@@ -299,7 +335,10 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen>
         }
       }
 
-      final parsed = ShelfTagParser.parse(ocrText);
+      final ocrLines = _extractOcrLines(recognizedText);
+      final parsed = ocrLines.isNotEmpty
+          ? ShelfTagParser.parseOcrLines(ocrLines)
+          : ShelfTagParser.parse(recognizedText.text);
       final result = ShelfTagResult(
         productName: parsed.productName,
         barcode: imageBarcode ?? parsed.barcode,
@@ -513,85 +552,88 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen>
                 ),
               ),
 
-              // Botões inferiores limpos
+              // Botões inferiores limpos (com destaque para Foto da Etiqueta)
               Positioned(
-                bottom: 36,
+                bottom: 24,
                 left: 16,
                 right: 16,
-                child: Center(
-                  child: SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        TextButton.icon(
-                          style: TextButton.styleFrom(
-                            backgroundColor: Colors.white.withValues(alpha: 0.16),
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-                          ),
-                          onPressed: _showManualInputDialog,
-                          icon: const Icon(Icons.keyboard_outlined, size: 18),
-                          label: const Text(
-                            'Digitar código',
-                            style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
-                          ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: _emeraldColor.withValues(alpha: 0.92),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 13),
+                        elevation: 4,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(26),
                         ),
-                        const SizedBox(width: 8),
-                        TextButton.icon(
-                          style: TextButton.styleFrom(
-                            backgroundColor: Colors.tealAccent.withValues(alpha: 0.20),
-                            foregroundColor: Colors.tealAccent.shade100,
-                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(24),
-                              side: BorderSide(color: Colors.tealAccent.withValues(alpha: 0.35)),
-                            ),
-                          ),
-                          onPressed: () => Navigator.pop(context, '__ACTION_OPEN_RECEIPT__'),
-                          icon: const Icon(Icons.receipt_long_rounded, size: 18, color: Colors.tealAccent),
-                          label: const Text(
-                            'Cupom Fiscal',
-                            style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        TextButton.icon(
-                          style: TextButton.styleFrom(
-                            backgroundColor: const Color(0xFF10B981).withValues(alpha: 0.22),
-                            foregroundColor: const Color(0xFF6EE7B7),
-                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(24),
-                              side: const BorderSide(color: Color(0xFF10B981), width: 1.2),
-                            ),
-                          ),
-                          onPressed: _scanShelfTag,
-                          icon: const Icon(Icons.sell_outlined, size: 18, color: Color(0xFF6EE7B7)),
-                          label: const Text(
-                            'Etiqueta Gôndola',
-                            style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        TextButton.icon(
-                          style: TextButton.styleFrom(
-                            backgroundColor: Colors.white.withValues(alpha: 0.16),
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-                          ),
-                          onPressed: () => Navigator.pop(context, '__ACTION_OPEN_NFC__'),
-                          icon: const Icon(Icons.nfc_rounded, size: 18, color: Colors.lightBlueAccent),
-                          label: const Text(
-                            'NFC',
-                            style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
-                          ),
-                        ),
-                      ],
+                      ),
+                      onPressed: _scanShelfTag,
+                      icon: const Icon(Icons.photo_camera_outlined, size: 20),
+                      label: const Text(
+                        'Tirar Foto da Etiqueta (Nome + Preço)',
+                        style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.bold),
+                      ),
                     ),
-                  ),
+                    const SizedBox(height: 10),
+                    SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          TextButton.icon(
+                            style: TextButton.styleFrom(
+                              backgroundColor: Colors.white.withValues(alpha: 0.16),
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+                            ),
+                            onPressed: _showManualInputDialog,
+                            icon: const Icon(Icons.keyboard_outlined, size: 18),
+                            label: const Text(
+                              'Digitar código',
+                              style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          TextButton.icon(
+                            style: TextButton.styleFrom(
+                              backgroundColor: Colors.tealAccent.withValues(alpha: 0.20),
+                              foregroundColor: Colors.tealAccent.shade100,
+                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(24),
+                                side: BorderSide(color: Colors.tealAccent.withValues(alpha: 0.35)),
+                              ),
+                            ),
+                            onPressed: () => Navigator.pop(context, '__ACTION_OPEN_RECEIPT__'),
+                            icon: const Icon(Icons.receipt_long_rounded, size: 18, color: Colors.tealAccent),
+                            label: const Text(
+                              'Cupom Fiscal',
+                              style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          TextButton.icon(
+                            style: TextButton.styleFrom(
+                              backgroundColor: Colors.white.withValues(alpha: 0.16),
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+                            ),
+                            onPressed: () => Navigator.pop(context, '__ACTION_OPEN_NFC__'),
+                            icon: const Icon(Icons.nfc_rounded, size: 18, color: Colors.lightBlueAccent),
+                            label: const Text(
+                              'NFC',
+                              style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
               ),
               if (_isAnalyzingFrame)
@@ -599,6 +641,7 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen>
                   color: Colors.black.withValues(alpha: 0.55),
                   child: Center(
                     child: Container(
+                      margin: const EdgeInsets.symmetric(horizontal: 24),
                       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
                       decoration: BoxDecoration(
                         color: const Color(0xFF0F172A),
@@ -614,9 +657,11 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen>
                             child: CircularProgressIndicator(strokeWidth: 2.4, color: _emeraldColor),
                           ),
                           const SizedBox(width: 14),
-                          Text(
-                            _processingLabel ?? 'Analisando etiqueta...',
-                            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+                          Flexible(
+                            child: Text(
+                              _processingLabel ?? 'Analisando etiqueta...',
+                              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+                            ),
                           ),
                         ],
                       ),

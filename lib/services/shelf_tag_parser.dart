@@ -1,4 +1,26 @@
+import 'dart:math' as math;
 import 'utils.dart';
+
+/// Linha OCR com geometria espacial (bounding box) para reconstruir etiquetas com fonte grande/fragmentada
+class ShelfTagOcrLine {
+  final String text;
+  final double left;
+  final double top;
+  final double right;
+  final double bottom;
+
+  const ShelfTagOcrLine({
+    required this.text,
+    required this.left,
+    required this.top,
+    required this.right,
+    required this.bottom,
+  });
+
+  double get height => (bottom - top).abs();
+  double get width => (right - left).abs();
+  double get centerY => (top + bottom) / 2.0;
+}
 
 /// Representa uma opção de preço identificada na etiqueta de gôndola
 class ShelfTagPrice {
@@ -263,15 +285,149 @@ class ShelfTagParser {
     return merged;
   }
 
+  /// Analisa blocos/linhas OCR preservando posição espacial (ideal para fotos de etiquetas com
+  /// inteiros gigantes e centavos sobrescritos separados pelo ML Kit).
+  static ShelfTagResult parseOcrLines(
+    List<ShelfTagOcrLine> ocrLines, {
+    bool requirePriceContext = false,
+  }) {
+    final valid = ocrLines.where((l) => l.text.trim().isNotEmpty).toList();
+    if (valid.isEmpty) {
+      return const ShelfTagResult(rawText: '');
+    }
+
+    // Ordena top-to-bottom e left-to-right
+    valid.sort((a, b) {
+      final dy = a.top - b.top;
+      if (dy.abs() > 4) return dy < 0 ? -1 : 1;
+      return a.left.compareTo(b.left);
+    });
+
+    final List<List<ShelfTagOcrLine>> rows = [];
+    for (final item in valid) {
+      int bestRowIdx = -1;
+      double bestScore = double.infinity;
+
+      for (int r = 0; r < rows.length; r++) {
+        final anchor = rows[r].first;
+        // Verifica contra o último elemento mais compatível na linha visual
+        for (final span in rows[r]) {
+          final double minH = math.max(1.0, math.min(span.height, item.height));
+          final double maxH = math.max(span.height, item.height);
+          final double overlap =
+              math.min(span.bottom, item.bottom) - math.max(span.top, item.top);
+          final double heightRatio = maxH / minH;
+
+          // Caso A: alturas compatíveis na mesma faixa horizontal
+          final bool sameTextBand =
+              heightRatio <= 2.2 && overlap >= minH * 0.42;
+
+          // Caso B: parte numérica de preço grande + centavos/R$ ao lado (ex: "29" + ",90" ou "R$" + "29")
+          final double hGap = item.left >= span.right
+              ? (item.left - span.right)
+              : (span.left - item.right);
+          final bool looksLikePricePair = overlap >= minH * 0.2 &&
+              hGap <= maxH * 2.5 &&
+              (_isPricePrefixOrInteger(span.text) && _isCentsOrNumericRightPart(item.text) ||
+                  _isPricePrefixOrInteger(item.text) && _isCentsOrNumericRightPart(span.text));
+
+          if (sameTextBand || looksLikePricePair) {
+            final dist = (anchor.centerY - item.centerY).abs();
+            if (dist < bestScore) {
+              bestScore = dist;
+              bestRowIdx = r;
+            }
+            break;
+          }
+        }
+      }
+
+      if (bestRowIdx != -1) {
+        rows[bestRowIdx].add(item);
+      } else {
+        rows.add([item]);
+      }
+    }
+
+    // Ordena as linhas resultantes verticalmente pela coordenada top média
+    rows.sort((a, b) {
+      final topA = a.map((e) => e.top).reduce(math.min);
+      final topB = b.map((e) => e.top).reduce(math.min);
+      return topA.compareTo(topB);
+    });
+
+    final List<String> reconstructedLines = [];
+    final List<double> rowHeights = [];
+    for (final row in rows) {
+      row.sort((a, b) => a.left.compareTo(b.left));
+      String joined = '';
+      double maxH = 0.0;
+      for (int idx = 0; idx < row.length; idx++) {
+        final span = row[idx];
+        maxH = math.max(maxH, span.height);
+        final t = span.text.trim();
+        if (joined.isEmpty) {
+          joined = t;
+          continue;
+        }
+        final prevTrim = joined.trimRight();
+        // Se juntou "29" (ou "R$ 29") + "90" (dois dígitos de centavos ao lado direito), une com vírgula
+        if (RegExp(r'(?:^|\s)(?:R\$\s*)?\d{1,4}$', caseSensitive: false).hasMatch(prevTrim) &&
+            RegExp(r'^\d{2}$').hasMatch(t) &&
+            span.height < row[idx - 1].height * 0.85) {
+          joined = '$prevTrim,$t';
+        } else if (RegExp(r'^[.,]\d{2}$').hasMatch(t) &&
+            RegExp(r'\d$').hasMatch(prevTrim)) {
+          joined = '$prevTrim$t';
+        } else {
+          joined = '$prevTrim $t';
+        }
+      }
+      if (joined.trim().isNotEmpty) {
+        reconstructedLines.add(joined.trim());
+        rowHeights.add(maxH);
+      }
+    }
+
+    final reconstructedRaw = reconstructedLines.join('\n');
+    return _parseInternal(
+      reconstructedRaw,
+      preprocessedOverride: _preprocessLines(reconstructedRaw),
+      lineHeights: rowHeights,
+      requirePriceContext: requirePriceContext,
+    );
+  }
+
+  static bool _isPricePrefixOrInteger(String s) {
+    final t = s.trim();
+    return RegExp(r'^(?:R\s*[\$5S]|\$)$', caseSensitive: false).hasMatch(t) ||
+        RegExp(r'^(?:R\$\s*)?\d{1,4}$', caseSensitive: false).hasMatch(t);
+  }
+
+  static bool _isCentsOrNumericRightPart(String s) {
+    final t = s.trim();
+    return RegExp(r'^[.,]?\d{2}$').hasMatch(t) ||
+        RegExp(r'^\d{1,4}(?:[.,]\d{2})?$').hasMatch(t);
+  }
+
   /// Analisa o texto bruto extraído via OCR de uma etiqueta de gôndola.
   /// Quando [requirePriceContext] é true (captura automática via scanner de barras),
   /// exige indício de moeda (`R$`) ou palavra-chave de gôndola para evitar falsos positivos em embalagens.
   static ShelfTagResult parse(String rawText, {bool requirePriceContext = false}) {
+    return _parseInternal(rawText, requirePriceContext: requirePriceContext);
+  }
+
+  static ShelfTagResult _parseInternal(
+    String rawText, {
+    List<String>? preprocessedOverride,
+    List<double>? lineHeights,
+    bool requirePriceContext = false,
+  }) {
     if (rawText.trim().isEmpty) {
       return const ShelfTagResult(rawText: '');
     }
 
-    final lines = _preprocessLines(rawText);
+    final lines = preprocessedOverride ?? _preprocessLines(rawText);
     if (lines.isEmpty) {
       return ShelfTagResult(rawText: rawText);
     }
@@ -312,7 +468,10 @@ class ShelfTagParser {
     final List<double> referenceValues = [];
     final Map<double, int?> priceToMinQty = {};
     final Map<double, bool> priceIsWholesale = {};
+    final Map<double, double> priceMaxHeight = {};
+    final Map<double, bool> priceHasOfferKeyword = {};
     final Set<int> priceLineIndexes = {};
+    final bool hasAlignedHeights = lineHeights != null && lineHeights.length == lines.length;
 
     for (int i = 0; i < lines.length; i++) {
       final line = lines[i];
@@ -388,6 +547,15 @@ class ShelfTagParser {
         if (!primaryValues.contains(val)) {
           primaryValues.add(val);
         }
+        if (hasAlignedHeights) {
+          final h = lineHeights[i];
+          if ((priceMaxHeight[val] ?? 0.0) < h) {
+            priceMaxHeight[val] = h;
+          }
+        }
+        if (hasShelfKeyword) {
+          priceHasOfferKeyword[val] = true;
+        }
 
         final bool isWholesaleIndicator = combinedContext.contains('atacado') ||
             combinedContext.contains('atacarejo') ||
@@ -418,8 +586,22 @@ class ShelfTagParser {
       }
     }
 
-    final List<double> extractedValues = primaryValues.isNotEmpty
-        ? List<double>.from(primaryValues)
+    List<double> filteredPrimary = List<double>.from(primaryValues);
+    if (hasAlignedHeights && filteredPrimary.length > 1 && priceMaxHeight.isNotEmpty) {
+      final maxHeight = priceMaxHeight.values.reduce(math.max);
+      if (maxHeight > 0) {
+        final prominent = filteredPrimary.where((v) {
+          final h = priceMaxHeight[v] ?? 0.0;
+          return h >= maxHeight * 0.25 || (priceHasOfferKeyword[v] ?? false);
+        }).toList();
+        if (prominent.isNotEmpty) {
+          filteredPrimary = prominent;
+        }
+      }
+    }
+
+    final List<double> extractedValues = filteredPrimary.isNotEmpty
+        ? filteredPrimary
         : (requirePriceContext ? <double>[] : List<double>.from(referenceValues));
 
     // 3. Seleciona inteligentemente o nome do produto entre as linhas da etiqueta

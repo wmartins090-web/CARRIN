@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
@@ -90,9 +91,16 @@ class _ReceiptScannerScreenState extends State<ReceiptScannerScreen> {
   double get _totalAmount => _extractedItems.fold(0.0, (sum, it) => sum + (it.unitPrice * it.quantity));
 
   Future<void> _processImage(ImageSource source) async {
+    String? tempPath;
     try {
-      final XFile? image = await _picker.pickImage(source: source);
+      final XFile? image = await _picker.pickImage(
+        source: source,
+        maxWidth: source == ImageSource.camera ? 2048 : null,
+        maxHeight: source == ImageSource.camera ? 2048 : null,
+        imageQuality: source == ImageSource.camera ? 90 : null,
+      );
       if (image == null) return;
+      tempPath = image.path;
 
       setState(() {
         _isProcessing = true;
@@ -124,6 +132,18 @@ class _ReceiptScannerScreenState extends State<ReceiptScannerScreen> {
         _statusMessage = 'Erro ao processar imagem: $e';
         _isProcessing = false;
       });
+    } finally {
+      if (tempPath != null &&
+          (source == ImageSource.camera ||
+              tempPath.contains('/cache/') ||
+              tempPath.contains(r'\cache\'))) {
+        try {
+          final f = File(tempPath);
+          if (await f.exists()) {
+            await f.delete();
+          }
+        } catch (_) {}
+      }
     }
   }
 
