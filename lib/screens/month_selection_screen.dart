@@ -11,6 +11,7 @@ import '../services/utils.dart';
 import 'shopping_list_screen.dart';
 import 'receipt_scanner_screen.dart';
 import '../widgets/join_shared_list_sheet.dart';
+import '../widgets/export_list_items_sheet.dart';
 
 class MonthSelectionScreen extends StatefulWidget {
   const MonthSelectionScreen({super.key});
@@ -416,9 +417,24 @@ class _MonthSelectionScreenState extends State<MonthSelectionScreen> with Automa
         } else if (value == 'receipt') {
           await provider.switchMonth(title);
           if (context.mounted) Navigator.push(context, MaterialPageRoute(builder: (_) => const ReceiptScannerScreen()));
+        } else if (value == 'export') {
+          final exportedTarget = await ExportListItemsSheet.showFromSource(
+            context,
+            provider: provider,
+            sourceMonth: title,
+          );
+          if (exportedTarget != null && context.mounted) {
+            await provider.switchMonth(exportedTarget);
+            if (context.mounted) {
+              Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const ShoppingListScreen()),
+              );
+            }
+          }
         }
       },
       itemBuilder: (context) => [
+        const PopupMenuItem(value: 'export', child: ListTile(leading: Icon(Icons.playlist_add_check_rounded, color: Color(0xFF10B981)), title: Text('Exportar para Próxima Lista'), dense: true)),
         const PopupMenuItem(value: 'receipt', child: ListTile(leading: Icon(Icons.receipt_long_outlined), title: Text('Escanear Nota'), dense: true)),
         const PopupMenuItem(value: 'edit', child: ListTile(leading: Icon(Icons.edit_outlined), title: Text('Editar Nome'), dense: true)), 
         const PopupMenuItem(value: 'delete', child: ListTile(leading: Icon(Icons.delete_outline, color: Colors.red), title: Text('Excluir', style: TextStyle(color: Colors.red)), dense: true))
@@ -793,23 +809,20 @@ class _MonthSelectionScreenState extends State<MonthSelectionScreen> with Automa
           ElevatedButton(
             onPressed: () async { 
               Navigator.of(context).pop(); 
-              try { 
-                await provider.createNewMonth(title, true, initialBudget: initialBudget, purpose: purpose); 
-                if (context.mounted) { 
-                  Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ShoppingListScreen())); 
-                } 
-              } catch (e) { 
-                if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text('Erro ao criar carrinho: $e'),
-                      backgroundColor: Colors.redAccent,
-                    ),
-                  );
-                }
-              } 
+              final created = await ExportListItemsSheet.showForNewList(
+                context,
+                provider: provider,
+                newMonthTitle: title,
+                budget: initialBudget,
+                purpose: purpose,
+              );
+              if (created == true && context.mounted) {
+                Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const ShoppingListScreen()),
+                );
+              }
             }, 
-            child: const Text('Copiar do Anterior', style: TextStyle(fontWeight: FontWeight.bold))
+            child: const Text('Escolher Lista Base', style: TextStyle(fontWeight: FontWeight.bold))
           )
         ]
       )

@@ -676,7 +676,14 @@ class UserSheetsService {
     }
   }
 
-  Future<void> createNewMonth(String newTitle, bool useTemplate, {double? initialBudget, String? sourceMonth}) async {
+  Future<void> createNewMonth(
+    String newTitle,
+    bool useTemplate, {
+    double? initialBudget,
+    String? sourceMonth,
+    bool resetPrices = true,
+    bool resetQuantities = false,
+  }) async {
     if (_spreadsheetId == null) await _ensureSpreadsheetExists();
     final api = _sheetsApi;
     if (api == null) throw StateError('Sheets API indisponível (aguardando autenticação)');
@@ -723,11 +730,13 @@ class UserSheetsService {
             for (var item in sourceItems) {
               if (item.name.trim().isNotEmpty) {
                 final bc = Item.parseBarcode(item.barcode);
+                final double qty = resetQuantities ? 0.0 : (item.quantity > 0 ? item.quantity : 1.0);
+                final double price = resetPrices ? 0.0 : item.unitPrice;
                 templateItems.add([
-                  item.isKg ? 0.0 : 0,
+                  item.isKg ? qty : (qty == qty.roundToDouble() ? qty.toInt() : qty),
                   item.name,
-                  item.unitPrice,
-                  0,
+                  price,
+                  qty * price,
                   item.category.isNotEmpty ? item.category : 'Outros',
                   'FALSE',
                   (bc != null && bc.isNotEmpty) ? "'$bc" : '',

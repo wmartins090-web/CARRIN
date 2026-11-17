@@ -293,5 +293,116 @@ CARNE PATINHO MOIDO 1,250 KG X 39,90 49,88
       await provider.restoreItem(itemB);
       expect(provider.items.map((e) => e.name).toList(), ['Leite Integral', 'Pao de Forma']);
     });
+
+    test('reconcileCloudItems preserves local isBought, price and qty when local edits are pending', () async {
+      final provider = ItemProvider();
+      await provider.initialization;
+
+      const month = 'Novembro 2026';
+      provider.setMonthsForTesting([month]);
+      provider.setItemsForTesting([
+        Item(
+          index: 7,
+          name: 'Arroz',
+          quantity: 1,
+          unitPrice: 0.0,
+          category: 'Grãos e Massas',
+          isBought: false,
+          barcode: '7896006711115',
+        ),
+      ], month: month);
+
+      await provider.mergeReceiptItems([
+        Item(name: 'ARROZ TIO JOAO 5KG', quantity: 2, unitPrice: 28.5, category: 'Grãos e Massas', barcode: '7896006711115'),
+      ]);
+
+      expect(provider.items.first.isBought, isTrue);
+      expect(provider.items.first.unitPrice, closeTo(28.5, 0.001));
+
+      // Stale cloud snapshot still shows unchecked item with old price
+      final staleCloud = [
+        Item(index: 7, name: 'Arroz', quantity: 1, unitPrice: 0.0, category: 'Grãos e Massas', isBought: false, barcode: null),
+      ];
+
+      final reconciled = await provider.reconcileCloudItemsForTesting(month, staleCloud, provider.items);
+      expect(reconciled.first.isBought, isTrue);
+      expect(reconciled.first.unitPrice, closeTo(28.5, 0.001));
+      expect(reconciled.first.quantity, 2);
+      expect(reconciled.first.barcode, '7896006711115');
+    });
+
+    test('getAvailableSourceMonthsSummary ranks most complete list first and exportItemsFromMonth keeps barcodes', () async {
+      final provider = ItemProvider();
+      await provider.initialization;
+
+      provider.setMonthsForTesting(['Setembro 2026', 'Outubro 2026', 'Novembro 2026']);
+
+      // Setembro: 1 item
+      provider.setItemsForTesting([
+        Item(index: 7, name: 'Cafe', quantity: 1, unitPrice: 18.0, category: 'Café e Chá', barcode: '7891000100103'),
+      ], month: 'Setembro 2026');
+
+      // Outubro: 3 items (2 with barcode) -> should be suggested as most complete
+      provider.setItemsForTesting([
+        Item(index: 7, name: 'ARROZ TIO JOAO 5KG', quantity: 2, unitPrice: 29.9, category: 'Grãos e Massas', isBought: true, barcode: '7896006711115'),
+        Item(index: 8, name: 'Leite Integral', quantity: 6, unitPrice: 5.4, category: 'Frios e Laticínios', isBought: true, barcode: '7894900011517'),
+        Item(index: 9, name: 'Banana Prata', quantity: 1.5, unitPrice: 6.9, isKg: true, category: 'Hortifruti', isBought: true),
+      ], month: 'Outubro 2026');
+
+      // Novembro: already has "Arroz" without barcode
+      provider.setItemsForTesting([
+        Item(index: 7, name: 'Arroz', quantity: 1, unitPrice: 0.0, category: 'Grãos e Massas', isBought: false, barcode: null),
+      ], month: 'Novembro 2026');
+
+      final summaries = await provider.getAvailableSourceMonthsSummary(excludeMonth: 'Novembro 2026');
+      expect(summaries.length, 2);
+      expect(summaries.first.title, 'Outubro 2026');
+      expect(summaries.first.isMostComplete, isTrue);
+      expect(summaries.first.itemCount, 3);
+      expect(summaries.first.barcodeCount, 2);
+
+      // Export from chosen Outubro 2026 into Novembro 2026 resetting prices & keeping quantities + barcodes
+      final exportRes = await provider.exportItemsFromMonth(
+        sourceMonth: 'Outubro 2026',
+        targetMonth: 'Novembro 2026',
+        resetPrices: true,
+        resetQuantities: false,
+        resetBought: true,
+        replaceExisting: false,
+      );
+
+      expect(exportRes.updatedCount, 1); // Arroz matched smartly with ARROZ TIO JOAO 5KG
+      expect(exportRes.addedCount, 2); // Leite + Banana
+      expect(exportRes.preservedBarcodesCount, 2);
+      expect(provider.items.length, 3);
+
+      final arroz = provider.items[0];
+      expect(arroz.barcode, '7896006711115');
+      expect(arroz.quantity, 2);
+      expect(arroz.unitPrice, 0.0);
+      expect(arroz.isBought, isFalse);
+
+      final leite = provider.items[1];
+      expect(leite.barcode, '7894900011517');
+      expect(leite.quantity, 6);
+      expect(leite.unitPrice, 0.0);
+      expect(leite.isBought, isFalse);
+
+      // Also verify createNewMonth using explicit sourceMonth ('Outubro 2026')
+      await provider.createNewMonth(
+        'Dezembro 2026',
+        true,
+        sourceMonth: 'Outubro 2026',
+        resetPrices: true,
+        resetQuantities: false,
+      );
+      expect(provider.currentMonth, 'Dezembro 2026');
+      expect(provider.items.length, 3);
+      expect(provider.items[0].barcode, '7896006711115');
+      expect(provider.items[0].quantity, 2);
+      expect(provider.items[0].unitPrice, 0.0);
+      expect(provider.items[0].isBought, isFalse);
+      expect(provider.items[1].barcode, '7894900011517');
+    });
   });
 }

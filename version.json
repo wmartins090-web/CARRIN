@@ -1,13 +1,13 @@
 ﻿{
-    "version":  "1.3.630",
-    "build_number":  630,
+    "version":  "1.3.631",
+    "build_number":  631,
     "release_date":  "2026-11-17",
-    "title":  "CARRIN v1.3.630",
+    "title":  "CARRIN v1.3.631",
     "release_notes":  [
-                          "Tela da câmera simplificada com apenas o botão de foto para ler nome, preço e código da etiqueta e descartar a imagem automaticamente."
+                          "Exportação/importação inteligente entre listas com escolha da lista base (destacando a maior lista), preservação de códigos de barras (EAN), preços zeráveis para atualizar na compra e proteção de status comprado."
                       ],
-    "apk_url":  "https://pub-4bdefe4ec784476eae543ebde4bd2f20.r2.dev/carrin_v1.3.630.apk",
-    "size_bytes":  116844450,
+    "apk_url":  "https://pub-4bdefe4ec784476eae543ebde4bd2f20.r2.dev/carrin_v1.3.631.apk",
+    "size_bytes":  116942830,
     "is_active":  true,
     "force_update":  false
 }

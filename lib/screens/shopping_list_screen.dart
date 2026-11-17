@@ -41,6 +41,7 @@ import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart
 import 'package:image_picker/image_picker.dart';
 import '../services/shelf_tag_parser.dart';
 import '../widgets/shelf_tag_selection_sheet.dart';
+import '../widgets/export_list_items_sheet.dart';
 
 /// The main shopping list view for a specific month.
 /// 
@@ -1162,6 +1163,21 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> with SingleTick
                                         ),
                                       );
                                     }
+                                  } else if (value == 'import_from_other') {
+                                    if (itemProvider.isCurrentMonthFinalized) {
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        const SnackBar(
+                                          content: Text('Esta lista está finalizada e não pode ser alterada.'),
+                                          backgroundColor: Colors.orange,
+                                        ),
+                                      );
+                                      return;
+                                    }
+                                    await ExportListItemsSheet.showForExistingTarget(
+                                      context,
+                                      provider: itemProvider,
+                                      targetMonth: itemProvider.currentMonth,
+                                    );
                                   } else if (value == 'share') {
                                     _openPairingSheet(defaultTransmit: false);
                                   } else if (value == 'finalize') {
@@ -1209,6 +1225,15 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> with SingleTick
                                     ),
                                   ),
                                   const PopupMenuDivider(),
+                                  const PopupMenuItem(
+                                    value: 'import_from_other',
+                                    child: ListTile(
+                                      leading: Icon(Icons.playlist_add_check_rounded, color: Colors.indigo),
+                                      title: Text('Importar de Outra Lista'),
+                                      dense: true,
+                                      contentPadding: EdgeInsets.zero,
+                                    ),
+                                  ),
                                   const PopupMenuItem(
                                     value: 'share',
                                     child: ListTile(
@@ -2612,6 +2637,12 @@ if (_isMarketLocked)
     double? activeRetailPrice = tagRetailPrice;
     double? activeWholesalePrice = tagWholesalePrice;
     int? activeWholesaleMinQty = tagWholesaleMinQty;
+    final bool isScannedFlow = scannedBarcode != null ||
+        prefilledPrice != null ||
+        tagRetailPrice != null ||
+        tagWholesalePrice != null;
+    bool markAsBought = (activeItem?.isBought ?? false) ||
+        (isScannedFlow && (prefilledPrice ?? 0) > 0);
     bool isKg = activeItem?.isKg ?? (productFromBc?['isKg'] ?? false);
     String category = activeItem?.category ?? prefilledCategory ?? (productFromBc?['category'] ?? (initialName.isNotEmpty ? ItemProvider.suggestCategoryForName(initialName) : 'Mercearia'));
     
@@ -2862,6 +2893,7 @@ if (_isMarketLocked)
                                   final formattedPrice = Utils.formatCurrencyInput(tagPrice);
                                   priceController.text = formattedPrice;
                                   priceController.selection = TextSelection.collapsed(offset: formattedPrice.length);
+                                  markAsBought = true;
                                 }
                                 if (tagRetail != null && tagRetail > 0) activeRetailPrice = tagRetail;
                                 if (tagWholesale != null && tagWholesale > 0) activeWholesalePrice = tagWholesale;
@@ -2941,6 +2973,7 @@ if (_isMarketLocked)
                               if (scaleInfo != null && scaleInfo.price != null && scaleInfo.price! > 0) {
                                 priceController.text = Utils.formatCurrencyInput(scaleInfo.price!);
                                 priceController.selection = TextSelection.collapsed(offset: priceController.text.length);
+                                markAsBought = true;
                               }
                               if (cached != null) {
                                 filledFromBarcode = true;
@@ -3102,6 +3135,13 @@ if (_isMarketLocked)
                     activeThumbColor: const Color(0xFFAEB2FF),
                     onChanged: (v) => setState(() => isKg = v)
                   ),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: Text('Marcar como Comprado (No Carrinho)', style: TextStyle(color: Theme.of(context).brightness == Brightness.dark ? Colors.white : Colors.black)),
+                    value: markAsBought,
+                    activeThumbColor: const Color(0xFF10B981),
+                    onChanged: (v) => setState(() => markAsBought = v),
+                  ),
                   if (isKg) ...[
                     const SizedBox(height: 8),
                     TextButton.icon(
@@ -3199,15 +3239,18 @@ if (_isMarketLocked)
                     Item? existingItem;
                     for (var it in provider.items) {
                       if (Utils.normalize(it.name) == normalizedNewName || 
-                          (finalBarcode != null && Item.parseBarcode(it.barcode) == finalBarcode)) {
+                          (finalBarcode != null && ReceiptItemMatcher.barcodesMatch(it.barcode, finalBarcode))) {
                         existingItem = it;
                         break;
                       }
                     }
 
                     if (existingItem != null) {
-                      // Se veio do scanner de código de barras, atualiza direto sem exibir popup de confirmação!
-                      if (scannedBarcode != null) {
+                      final preservedBc = finalBarcode ??
+                          Item.parseBarcode(existingItem.barcode) ??
+                          provider.findBarcodeForProductName(existingItem.name);
+                      // Se veio do scanner de código de barras ou etiqueta, atualiza direto sem popup!
+                      if (scannedBarcode != null || isScannedFlow) {
                         final finalSupermarket = supermarketController.text.trim().isNotEmpty
                             ? supermarketController.text.trim()
                             : null;
@@ -3217,7 +3260,8 @@ if (_isMarketLocked)
                         final updated = existingItem.copyWith(
                           unitPrice: parsedPrice > 0 ? parsedPrice : existingItem.unitPrice,
                           quantity: parsedQty,
-                          barcode: finalBarcode ?? existingItem.barcode,
+                          isBought: existingItem.isBought || markAsBought,
+                          barcode: preservedBc,
                           category: category,
                           supermarket: finalSupermarket ?? existingItem.supermarket,
                         );
@@ -3252,7 +3296,8 @@ if (_isMarketLocked)
                         final updated = existingItem.copyWith(
                           unitPrice: parsedPrice > 0 ? parsedPrice : existingItem.unitPrice,
                           quantity: parsedQty,
-                          barcode: finalBarcode ?? existingItem.barcode,
+                          isBought: existingItem.isBought || markAsBought,
+                          barcode: preservedBc,
                           category: category,
                           supermarket: finalSupermarket ?? existingItem.supermarket,
                         );
@@ -3270,6 +3315,10 @@ if (_isMarketLocked)
                     provider.addOrUpdateSupermarket(name: finalSupermarket);
                   }
 
+                  final preservedFinalBc = finalBarcode ??
+                      Item.parseBarcode(activeItem?.barcode) ??
+                      provider.findBarcodeForProductName(name);
+
                   final newItem = Item(
                     index: activeItem?.index, 
                     name: name, 
@@ -3277,8 +3326,8 @@ if (_isMarketLocked)
                     quantity: parsedQty, 
                     isKg: isKg, 
                     category: category, 
-                    isBought: activeItem?.isBought ?? false,
-                    barcode: finalBarcode,
+                    isBought: markAsBought,
+                    barcode: preservedFinalBc,
                     supermarket: finalSupermarket,
                   );
                   if (activeItem == null) { provider.addItem(newItem); } else { provider.updateItem(newItem); }

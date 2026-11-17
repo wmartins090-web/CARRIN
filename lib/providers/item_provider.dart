@@ -29,6 +29,25 @@ class ReceiptMergeResult {
   });
 }
 
+/// Resumo de uma lista/mês disponível como origem para exportação de itens.
+class MonthExportSummary {
+  final String title;
+  final int itemCount;
+  final int barcodeCount;
+  final double total;
+  final bool isFinalized;
+  final bool isMostComplete;
+
+  const MonthExportSummary({
+    required this.title,
+    required this.itemCount,
+    required this.barcodeCount,
+    required this.total,
+    this.isFinalized = false,
+    this.isMostComplete = false,
+  });
+}
+
 /// Main state management provider for the application.
 /// 
 /// Coordinates data flow between [UserSheetsService] (cloud), [SharedPreferences] (local cache),
@@ -891,7 +910,16 @@ class ItemProvider with ChangeNotifier {
             final useTemplate = op.payload['useTemplate'] as bool;
             final initialBudget = op.payload['initialBudget'] != null ? (op.payload['initialBudget'] as num).toDouble() : null;
             final sourceMonth = op.payload['sourceMonth'] as String?;
-            await _service.createNewMonth(title, useTemplate, initialBudget: initialBudget, sourceMonth: sourceMonth);
+            final resetPrices = op.payload['resetPrices'] as bool? ?? true;
+            final resetQuantities = op.payload['resetQuantities'] as bool? ?? false;
+            await _service.createNewMonth(
+              title,
+              useTemplate,
+              initialBudget: initialBudget,
+              sourceMonth: sourceMonth,
+              resetPrices: resetPrices,
+              resetQuantities: resetQuantities,
+            );
           } else if (op.type == 'rename_month') {
             final oldTitle = op.payload['oldTitle'] as String;
             final newTitle = op.payload['newTitle'] as String;
@@ -1056,6 +1084,7 @@ class ItemProvider with ChangeNotifier {
 
   void _bumpLocalMutation(String month) {
     _localMutationVersion[month] = (_localMutationVersion[month] ?? 0) + 1;
+    _markMonthDirty(month);
   }
 
   String get _dirtyMonthsPrefsKey => 'dirty_sync_months_$_userPrefsPrefix';
@@ -1538,25 +1567,33 @@ class ItemProvider with ChangeNotifier {
       await updateBudget(newBudget);
     }
 
-    for (var it in sharedItems) {
-      if (!replaceExisting) {
-        final existingIdx = _items.indexWhere((existing) =>
-            Utils.normalize(existing.name) == Utils.normalize(it.name) ||
-            (it.barcode != null &&
-                it.barcode!.isNotEmpty &&
-                ReceiptItemMatcher.barcodesMatch(existing.barcode, it.barcode)));
-        if (existingIdx != -1) {
-          final existing = _items[existingIdx];
-          final incomingBc = Item.parseBarcode(it.barcode);
-          if ((existing.barcode == null || existing.barcode!.trim().isEmpty) &&
+    if (replaceExisting) {
+      for (var it in sharedItems) {
+        final effectiveBc = Item.parseBarcode(it.barcode) ?? findBarcodeForProductName(it.name);
+        await addItem(effectiveBc != null ? it.copyWith(barcode: effectiveBc) : it);
+      }
+    } else if (sharedItems.isNotEmpty) {
+      final matchRes = ReceiptItemMatcher.matchItems(
+        receiptItems: sharedItems,
+        cartItems: _items,
+        barcodeNameResolver: (bc) => findProductByBarcode(bc)?['name'] as String?,
+      );
+      for (int i = 0; i < sharedItems.length; i++) {
+        final it = sharedItems[i];
+        final incomingBc = Item.parseBarcode(it.barcode) ?? findBarcodeForProductName(it.name);
+        final cartPos = matchRes.receiptToCartIndex[i];
+        if (cartPos != null && cartPos >= 0 && cartPos < _items.length) {
+          final existing = _items[cartPos];
+          final existingBc = Item.parseBarcode(existing.barcode);
+          if ((existingBc == null || existingBc.isEmpty) &&
               incomingBc != null &&
               incomingBc.isNotEmpty) {
             await updateItem(existing.copyWith(barcode: incomingBc));
           }
           continue;
         }
+        await addItem(incomingBc != null ? it.copyWith(barcode: incomingBc) : it);
       }
-      await addItem(it);
     }
     _safeNotify();
   }
@@ -2365,7 +2402,9 @@ class ItemProvider with ChangeNotifier {
       }
     }
 
-    // Preserva códigos de barra e mercado caso o Sheets tenha retornado vazio ou formatado
+    // Preserva alterações locais (status comprado, preço, qtd, código de barras e mercado) quando houver edição pendente,
+    // além de sempre preservar códigos de barra locais caso o Sheets retorne vazio/formatado.
+    bool needsCloudPush = removedDeletedFromCloud;
     List<Item> mergedItems = filteredCloud.map((cloudItem) {
       final cloudBc = Item.parseBarcode(cloudItem.barcode);
       final norm = Utils.normalize(cloudItem.name);
@@ -2377,13 +2416,34 @@ class ItemProvider with ChangeNotifier {
           ? cloudItem.supermarket
           : localMatch?.supermarket;
 
+      if (isDirtyLocally && localMatch != null) {
+        final bool localChangedVsCloud =
+            localMatch.isBought != cloudItem.isBought ||
+            (localMatch.unitPrice - cloudItem.unitPrice).abs() > 0.001 ||
+            (localMatch.quantity - cloudItem.quantity).abs() > 0.001 ||
+            localMatch.name != cloudItem.name ||
+            (preservedBc ?? '') != (cloudBc ?? '');
+        if (localChangedVsCloud) {
+          needsCloudPush = true;
+        }
+        return cloudItem.copyWith(
+          name: localMatch.name,
+          quantity: localMatch.quantity,
+          unitPrice: localMatch.unitPrice,
+          isKg: localMatch.isKg,
+          category: localMatch.category,
+          isBought: localMatch.isBought,
+          barcode: preservedBc,
+          supermarket: preservedMarket,
+        );
+      }
+
       return cloudItem.copyWith(
         barcode: preservedBc,
         supermarket: preservedMarket,
       );
     }).toList();
 
-    bool needsCloudPush = removedDeletedFromCloud;
     if (isDirtyLocally && localCachedItems.isNotEmpty) {
       final cloudNames = mergedItems.map((e) => Utils.normalize(e.name)).toSet();
       final missingFromCloud = localCachedItems
@@ -2629,13 +2689,294 @@ class ItemProvider with ChangeNotifier {
     await _switchMonth(month);
   }
 
+  Future<List<Item>> _resolveItemsForMonth(String month) async {
+    if (month == _service.currentMonthTitle && _items.isNotEmpty) {
+      return List.from(_items);
+    }
+    if (_itemsCache.containsKey(month) && _itemsCache[month]!.isNotEmpty) {
+      return List.from(_itemsCache[month]!);
+    }
+    if (month == _service.currentMonthTitle && _items.isEmpty && _itemsCache.containsKey(month)) {
+      return List.from(_itemsCache[month]!);
+    }
+    try {
+      final dbItems = await _dbHelper.getItems(month);
+      if (dbItems.isNotEmpty) {
+        _itemsCache[month] = List.from(dbItems);
+      }
+      return dbItems;
+    } catch (_) {
+      return List.from(_itemsCache[month] ?? const []);
+    }
+  }
+
+  Item _buildExportedItem(
+    Item source, {
+    required bool resetPrices,
+    required bool resetQuantities,
+    required bool resetBought,
+    String? preservedBarcodeOverride,
+  }) {
+    final String? effectiveBc = Item.parseBarcode(preservedBarcodeOverride) ??
+        Item.parseBarcode(source.barcode) ??
+        findBarcodeForProductName(source.name);
+    final double qty = resetQuantities
+        ? 0.0
+        : (source.quantity > 0 ? source.quantity : 1.0);
+    final double price = resetPrices ? 0.0 : source.unitPrice;
+    return Item(
+      name: source.name,
+      quantity: qty,
+      unitPrice: price,
+      isKg: source.isKg,
+      category: source.category.isNotEmpty ? source.category : suggestCategoryForName(source.name),
+      isBought: resetBought ? false : source.isBought,
+      barcode: effectiveBc,
+      supermarket: source.supermarket,
+    );
+  }
+
+  /// Lista todas as listas disponíveis ordenadas pela mais completa (mais itens e EANs),
+  /// para o usuário escolher de qual lista exportar itens mantendo os códigos de barras.
+  Future<List<MonthExportSummary>> getAvailableSourceMonthsSummary({String? excludeMonth}) async {
+    await initialization;
+    final List<MonthExportSummary> list = [];
+    final String? excludedNorm = excludeMonth?.trim().toLowerCase();
+
+    for (final m in _months) {
+      if (excludedNorm != null && m.trim().toLowerCase() == excludedNorm) continue;
+      final items = await _resolveItemsForMonth(m);
+      int count = items.length;
+      int barcodeCount = 0;
+      double total = 0.0;
+      if (items.isNotEmpty) {
+        for (final it in items) {
+          final bc = Item.parseBarcode(it.barcode) ?? findBarcodeForProductName(it.name);
+          if (bc != null && bc.isNotEmpty) barcodeCount++;
+          if (it.isBought) total += it.totalPrice;
+        }
+      } else {
+        final summary = _cachedSummary[m];
+        count = (summary?['totalItems'] ?? 0.0).toInt();
+        total = summary?['total'] ?? 0.0;
+      }
+
+      list.add(MonthExportSummary(
+        title: m,
+        itemCount: count,
+        barcodeCount: barcodeCount,
+        total: total,
+        isFinalized: isMonthFinalized(m),
+      ));
+    }
+
+    list.sort((a, b) {
+      final cmpCount = b.itemCount.compareTo(a.itemCount);
+      if (cmpCount != 0) return cmpCount;
+      return b.barcodeCount.compareTo(a.barcodeCount);
+    });
+
+    if (list.isNotEmpty && list.first.itemCount > 0) {
+      final first = list.first;
+      list[0] = MonthExportSummary(
+        title: first.title,
+        itemCount: first.itemCount,
+        barcodeCount: first.barcodeCount,
+        total: first.total,
+        isFinalized: first.isFinalized,
+        isMostComplete: true,
+      );
+    }
+
+    return list;
+  }
+
+  /// Exporta itens de [sourceMonth] para [targetMonth] preservando códigos de barra (EAN).
+  /// Permite substituir toda a lista ou mesclar/substituir itens equivalentes sem duplicar,
+  /// opcionalmente zerando preços para facilitar apenas a atualização na próxima compra.
+  Future<ReceiptMergeResult> exportItemsFromMonth({
+    required String sourceMonth,
+    required String targetMonth,
+    bool resetPrices = true,
+    bool resetQuantities = false,
+    bool resetBought = true,
+    bool replaceExisting = false,
+  }) async {
+    await initialization;
+    if (sourceMonth.trim().isEmpty ||
+        targetMonth.trim().isEmpty ||
+        sourceMonth == targetMonth ||
+        isMonthFinalized(targetMonth)) {
+      return const ReceiptMergeResult(addedCount: 0, updatedCount: 0);
+    }
+
+    final sourceItems = await _resolveItemsForMonth(sourceMonth);
+    if (sourceItems.isEmpty) {
+      return const ReceiptMergeResult(addedCount: 0, updatedCount: 0);
+    }
+
+    final targetItems = await _resolveItemsForMonth(targetMonth);
+    int updatedCount = 0;
+    int addedCount = 0;
+    int preservedBarcodesCount = 0;
+    List<Item> resultingItems = [];
+
+    if (replaceExisting) {
+      // Ao substituir toda a lista, reaproveita códigos de barras de ambos os lados
+      final Map<String, String> targetBarcodeByName = {};
+      for (final oldIt in targetItems) {
+        final bc = Item.parseBarcode(oldIt.barcode);
+        if (bc != null && bc.isNotEmpty) {
+          targetBarcodeByName[Utils.normalize(oldIt.name)] = bc;
+        }
+      }
+
+      final Set<String> exportedNames = {};
+      for (final src in sourceItems) {
+        final norm = Utils.normalize(src.name);
+        if (exportedNames.contains(norm)) continue;
+        exportedNames.add(norm);
+        final exported = _buildExportedItem(
+          src,
+          resetPrices: resetPrices,
+          resetQuantities: resetQuantities,
+          resetBought: resetBought,
+          preservedBarcodeOverride: targetBarcodeByName[norm],
+        );
+        if (exported.barcode != null && exported.barcode!.isNotEmpty) {
+          preservedBarcodesCount++;
+        }
+        resultingItems.add(exported);
+        addedCount++;
+      }
+
+      final removedOld = targetItems
+          .where((old) => !exportedNames.contains(Utils.normalize(old.name)))
+          .toList();
+      if (removedOld.isNotEmpty) {
+        await _markItemsDeleted(targetMonth, removedOld);
+      }
+    } else {
+      resultingItems = List.from(targetItems);
+      final matchRes = ReceiptItemMatcher.matchItems(
+        receiptItems: sourceItems,
+        cartItems: resultingItems,
+        barcodeNameResolver: (bc) => findProductByBarcode(bc)?['name'] as String?,
+      );
+
+      final Set<int> updatedPositions = {};
+      for (int sIdx = 0; sIdx < sourceItems.length; sIdx++) {
+        final src = sourceItems[sIdx];
+        final cartPos = matchRes.receiptToCartIndex[sIdx];
+
+        if (cartPos != null && cartPos >= 0 && cartPos < resultingItems.length) {
+          if (!updatedPositions.add(cartPos)) continue;
+          final existing = resultingItems[cartPos];
+          final effectiveBc = Item.parseBarcode(existing.barcode) ??
+              Item.parseBarcode(src.barcode) ??
+              findBarcodeForProductName(existing.name) ??
+              findBarcodeForProductName(src.name);
+          final double newPrice = resetPrices
+              ? 0.0
+              : (src.unitPrice > 0 ? src.unitPrice : existing.unitPrice);
+          final double newQty = resetQuantities
+              ? (existing.quantity > 0 ? existing.quantity : 0.0)
+              : (src.quantity > 0 ? src.quantity : existing.quantity);
+          final updated = existing.copyWith(
+            quantity: newQty,
+            unitPrice: newPrice,
+            isKg: existing.isKg || src.isKg,
+            isBought: resetBought ? false : existing.isBought,
+            barcode: effectiveBc,
+            supermarket: src.supermarket ?? existing.supermarket,
+          );
+          resultingItems[cartPos] = updated;
+          if (effectiveBc != null && effectiveBc.isNotEmpty) {
+            preservedBarcodesCount++;
+          }
+          updatedCount++;
+        } else {
+          final exported = _buildExportedItem(
+            src,
+            resetPrices: resetPrices,
+            resetQuantities: resetQuantities,
+            resetBought: resetBought,
+          );
+          if (exported.barcode != null && exported.barcode!.isNotEmpty) {
+            preservedBarcodesCount++;
+          }
+          resultingItems.add(exported);
+          addedCount++;
+        }
+      }
+    }
+
+    for (int i = 0; i < resultingItems.length; i++) {
+      resultingItems[i] = resultingItems[i].copyWith(index: i + 7);
+    }
+
+    _rememberBarcodesFromList(resultingItems);
+    await _clearDeletedItems(targetMonth, resultingItems);
+    _bumpLocalMutation(targetMonth);
+    _itemsCache[targetMonth] = List.from(resultingItems);
+
+    if (targetMonth == _service.currentMonthTitle) {
+      _items = List.from(resultingItems);
+      _updateLocalMetrics(checkBudget: true);
+      _safeNotify();
+    } else {
+      final oldSummary = _cachedSummary[targetMonth] ?? {};
+      final double budget = oldSummary['budget'] ?? 0.0;
+      double total = 0.0;
+      double boughtCount = 0.0;
+      for (final it in resultingItems) {
+        if (it.isBought) {
+          total += it.totalPrice;
+          boughtCount++;
+        }
+      }
+      _cachedSummary[targetMonth] = {
+        ...oldSummary,
+        'budget': budget,
+        'total': total,
+        'balance': budget - total,
+        'totalItems': resultingItems.length.toDouble(),
+        'boughtItems': boughtCount,
+      };
+      _safeNotify();
+    }
+
+    await _enqueueDbWrite(() async {
+      try {
+        await _dbHelper.saveItems(targetMonth, resultingItems);
+        await _dbHelper.saveLocalBackupSnapshot();
+      } catch (e) {
+        debugPrint('Erro ao exportar itens para "$targetMonth" no SQLite: $e');
+      }
+    });
+
+    _enqueueOperation('sync_items', targetMonth, {});
+    return ReceiptMergeResult(
+      addedCount: addedCount,
+      updatedCount: updatedCount,
+      preservedBarcodesCount: preservedBarcodesCount,
+    );
+  }
+
   Future<void> createNewMonth(
     String title, 
     bool useTemplate, 
-    {double? initialBudget, String? purpose, String? workspace}
+    {
+      double? initialBudget,
+      String? purpose,
+      String? workspace,
+      String? sourceMonth,
+      bool resetPrices = true,
+      bool resetQuantities = false,
+    }
   ) async {
     await initialization;
-    String sourceMonth = '';
+    String resolvedSourceMonth = '';
     final activeWs = workspace ?? _currentWorkspace;
     final activePurpose = purpose ?? 'geral';
 
@@ -2679,26 +3020,33 @@ class ItemProvider with ChangeNotifier {
       }
 
       if (useTemplate) {
-        sourceMonth = _service.currentMonthTitle;
         List<Item> sourceItems = [];
-        
-        // 1. Tenta pegar itens do mês atual
-        if (sourceMonth.isNotEmpty && _months.contains(sourceMonth)) {
-          sourceItems = await _dbHelper.getItems(sourceMonth);
+
+        // 1. Se o usuário escolheu explicitamente a lista de origem, usa ela!
+        if (sourceMonth != null && sourceMonth.trim().isNotEmpty && _months.contains(sourceMonth.trim())) {
+          resolvedSourceMonth = sourceMonth.trim();
+          sourceItems = await _resolveItemsForMonth(resolvedSourceMonth);
         }
 
-        // 2. Se o atual estiver vazio, busca o mês mais recente (de trás para frente) que tenha itens
+        // 2. Fallback: lista com mais itens disponível, ou mês atual
         if (sourceItems.isEmpty) {
-          debugPrint('🔍 createNewMonth: Mês atual "$sourceMonth" está vazio. Buscando alternativa...');
-          for (var m in _months.reversed) {
-            if (m != title && m != sourceMonth) {
-              final items = await _dbHelper.getItems(m);
-              if (items.isNotEmpty) {
-                sourceMonth = m;
-                sourceItems = items;
-                debugPrint('🔍 createNewMonth: Usando "$m" como template alternativo (${items.length} itens)');
-                break;
-              }
+          final current = _service.currentMonthTitle;
+          if (current.isNotEmpty && current != title && _months.contains(current)) {
+            final currentItems = await _resolveItemsForMonth(current);
+            if (currentItems.isNotEmpty) {
+              resolvedSourceMonth = current;
+              sourceItems = currentItems;
+            }
+          }
+        }
+        if (sourceItems.isEmpty) {
+          final candidates = await getAvailableSourceMonthsSummary(excludeMonth: title);
+          for (final cand in candidates) {
+            final items = await _resolveItemsForMonth(cand.title);
+            if (items.isNotEmpty) {
+              resolvedSourceMonth = cand.title;
+              sourceItems = items;
+              break;
             }
           }
         }
@@ -2708,21 +3056,22 @@ class ItemProvider with ChangeNotifier {
             final List<Item> templateItems = [];
             int nextIndex = 7;
             for (var it in sourceItems) {
-              templateItems.add(Item(
-                index: nextIndex++,
-                name: it.name,
-                quantity: 0,
-                unitPrice: 0,
-                isKg: it.isKg,
-                category: it.category,
-                isBought: false,
-                barcode: it.barcode,
-              ));
+              templateItems.add(_buildExportedItem(
+                it,
+                resetPrices: resetPrices,
+                resetQuantities: resetQuantities,
+                resetBought: true,
+              ).copyWith(index: nextIndex++));
             }
+            _rememberBarcodesFromList(templateItems);
+            _itemsCache[title] = templateItems;
+            _cachedSummary[title] = {
+              ...initialData,
+              'totalItems': templateItems.length.toDouble(),
+            };
             await _dbHelper.saveItems(title, templateItems);
-            _itemsCache[title] = templateItems; // Save to memory cache
           } catch (e) {
-            debugPrint('Erro ao decodificar template do mês anterior localmente no SQLite: $e');
+            debugPrint('Erro ao decodificar template da lista "$resolvedSourceMonth" localmente no SQLite: $e');
           }
         }
       }
@@ -2735,7 +3084,9 @@ class ItemProvider with ChangeNotifier {
       'title': title,
       'useTemplate': useTemplate,
       'initialBudget': initialBudget,
-      'sourceMonth': sourceMonth,
+      'sourceMonth': resolvedSourceMonth,
+      'resetPrices': resetPrices,
+      'resetQuantities': resetQuantities,
     });
     
     await _switchMonth(title);
