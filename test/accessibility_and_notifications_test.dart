@@ -92,15 +92,15 @@ void main() {
     test('update dismissal persists build number and version', () async {
       final updateService = AppUpdateService.instance;
       
-      expect(await updateService.isBuildDismissed(629, version: '1.3.629'), isFalse);
-
-      await updateService.dismissBuild(629, version: '1.3.629');
-
-      expect(await updateService.isBuildDismissed(629, version: '1.3.629'), isTrue);
-      // Older or equal build numbers should also be considered dismissed
-      expect(await updateService.isBuildDismissed(628, version: '1.3.628'), isTrue);
-      // Newer build numbers should not be dismissed
       expect(await updateService.isBuildDismissed(630, version: '1.3.630'), isFalse);
+
+      await updateService.dismissBuild(630, version: '1.3.630');
+
+      expect(await updateService.isBuildDismissed(630, version: '1.3.630'), isTrue);
+      // Older or equal build numbers should also be considered dismissed
+      expect(await updateService.isBuildDismissed(629, version: '1.3.629'), isTrue);
+      // Newer build numbers should not be dismissed
+      expect(await updateService.isBuildDismissed(631, version: '1.3.631'), isFalse);
     });
   });
 }

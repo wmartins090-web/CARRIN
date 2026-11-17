@@ -198,68 +198,6 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen>
     Navigator.pop(context, code);
   }
 
-  void _showManualInputDialog() {
-    final textController = TextEditingController();
-    showDialog(
-      context: context,
-      builder: (dialogCtx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Row(
-          children: [
-            Icon(Icons.keyboard_outlined, color: Colors.blueAccent),
-            SizedBox(width: 10),
-            Text('Digitar Código', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Digite os números do código de barras ou a chave do produto:',
-              style: TextStyle(fontSize: 13, color: Colors.grey),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: textController,
-              autofocus: true,
-              keyboardType: TextInputType.text,
-              decoration: InputDecoration(
-                hintText: 'Ex: 7891000100103',
-                prefixIcon: const Icon(Icons.qr_code_2_rounded),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                filled: true,
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogCtx),
-            child: const Text('Cancelar', style: TextStyle(color: Colors.grey)),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Theme.of(context).primaryColor,
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-            ),
-            onPressed: () {
-              final val = textController.text.trim();
-              if (val.isNotEmpty) {
-                Navigator.pop(dialogCtx);
-                if (mounted) {
-                  Navigator.pop(context, val);
-                }
-              }
-            },
-            child: const Text('Confirmar'),
-          ),
-        ],
-      ),
-    );
-  }
-
   List<ShelfTagOcrLine> _extractOcrLines(RecognizedText recognized) {
     final List<ShelfTagOcrLine> lines = [];
     for (final block in recognized.blocks) {
@@ -528,114 +466,42 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen>
                 },
               ),
 
-              // Instrução central elegante
-              Positioned(
-                top: scanRect.bottom + 24,
-                left: 20,
-                right: 20,
-                child: Center(
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withValues(alpha: 0.55),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: const Text(
-                      'Aponte para o código da gôndola, produto ou cupom',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w500,
+              // Botão único e limpo de câmera para fotografar etiqueta
+              if (!widget.title.contains('NFC-e'))
+                Positioned(
+                  bottom: MediaQuery.of(context).padding.bottom + 32,
+                  left: 0,
+                  right: 0,
+                  child: Center(
+                    child: Tooltip(
+                      message: 'Tirar foto da etiqueta',
+                      child: GestureDetector(
+                        onTap: _isAnalyzingFrame ? null : _scanShelfTag,
+                        child: Container(
+                          width: 76,
+                          height: 76,
+                          padding: const EdgeInsets.all(4),
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            border: Border.all(color: Colors.white, width: 3.5),
+                            color: Colors.black.withValues(alpha: 0.25),
+                          ),
+                          child: Container(
+                            decoration: const BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: Colors.white,
+                            ),
+                            child: const Icon(
+                              Icons.camera_alt_rounded,
+                              color: Colors.black87,
+                              size: 32,
+                            ),
+                          ),
+                        ),
                       ),
                     ),
                   ),
                 ),
-              ),
-
-              // Botões inferiores limpos (com destaque para Foto da Etiqueta)
-              Positioned(
-                bottom: 24,
-                left: 16,
-                right: 16,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    ElevatedButton.icon(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: _emeraldColor.withValues(alpha: 0.92),
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 13),
-                        elevation: 4,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(26),
-                        ),
-                      ),
-                      onPressed: _scanShelfTag,
-                      icon: const Icon(Icons.photo_camera_outlined, size: 20),
-                      label: const Text(
-                        'Tirar Foto da Etiqueta (Nome + Preço)',
-                        style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.bold),
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          TextButton.icon(
-                            style: TextButton.styleFrom(
-                              backgroundColor: Colors.white.withValues(alpha: 0.16),
-                              foregroundColor: Colors.white,
-                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-                            ),
-                            onPressed: _showManualInputDialog,
-                            icon: const Icon(Icons.keyboard_outlined, size: 18),
-                            label: const Text(
-                              'Digitar código',
-                              style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          TextButton.icon(
-                            style: TextButton.styleFrom(
-                              backgroundColor: Colors.tealAccent.withValues(alpha: 0.20),
-                              foregroundColor: Colors.tealAccent.shade100,
-                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(24),
-                                side: BorderSide(color: Colors.tealAccent.withValues(alpha: 0.35)),
-                              ),
-                            ),
-                            onPressed: () => Navigator.pop(context, '__ACTION_OPEN_RECEIPT__'),
-                            icon: const Icon(Icons.receipt_long_rounded, size: 18, color: Colors.tealAccent),
-                            label: const Text(
-                              'Cupom Fiscal',
-                              style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          TextButton.icon(
-                            style: TextButton.styleFrom(
-                              backgroundColor: Colors.white.withValues(alpha: 0.16),
-                              foregroundColor: Colors.white,
-                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-                            ),
-                            onPressed: () => Navigator.pop(context, '__ACTION_OPEN_NFC__'),
-                            icon: const Icon(Icons.nfc_rounded, size: 18, color: Colors.lightBlueAccent),
-                            label: const Text(
-                              'NFC',
-                              style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
               if (_isAnalyzingFrame)
                 Container(
                   color: Colors.black.withValues(alpha: 0.55),
